@@ -873,3 +873,18 @@ Director가 최종 결정한다.
 브라우저 안에서 살아 움직이게 만든다.
 
 Everything else can wait.
+
+---
+
+# 29. TITLE SEQUENCE
+
+**STATUS: DRAFT (variant not chosen yet)**
+
+Director decisions:
+
+- 타이틀은 `SUGAR / HONEY / ICED TEA`.
+- 세 단어는 **동등한 위계**로 읽혀야 한다. 어느 하나를 크게 / 작게 하지 않는다.
+- 읽는 사람이 부담스러울 정도로 크게 뜬다.
+- 타이포 방향: 오락실 픽셀 글자를 종이에 인쇄된 것처럼 바랜 세피아로 처리한다
+  (`intro_concepts.html` 10 WORN 기준: 단말기 글꼴, 잉크 빠짐, 1px 어긋난 잔상).
+- 순서: 타이틀 → 창작자명 `@1300dress` 짧게 → 디졸브되며 개미가 보인다.

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SUGAR — World Visual Test</title>
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=block" rel="stylesheet">
 <style>
   html, body {
     margin: 0;
@@ -486,6 +487,309 @@ function drawPlayer() {
 }
 
 // ==================================================
+// INTRO TITLE SEQUENCE (GAME_BIBLE §29) — DRAFT
+// ?intro=1..4 picks a variant, ?intro=0 skips the intro.
+// Any key or click jumps straight to the reveal.
+// ==================================================
+
+// ink tones from the title concepts page
+const INK = [42, 34, 27];
+const GHOST = [128, 104, 78];
+const CREDIT_INK = [92, 74, 56];
+
+const INTRO_VARIANTS = {
+  // the title concept 10 as-is: one line, edge to edge
+  1: { layout: "line",    hold: 3800, out: "pixel", reveal: "film" },
+  // three equal lines stacked, letters wear away pixel by pixel
+  2: { layout: "stack",   hold: 3800, out: "ink",   reveal: "pixel" },
+  // three lines each stretched to the full width: a wall of text
+  3: { layout: "justify", hold: 3800, out: "pixel", reveal: "pixel" },
+  // one line too big for the screen, read as it slides past
+  4: { layout: "pan",     hold: 6500, out: "film",  reveal: "film" }
+};
+
+const introParam = new URLSearchParams(location.search).get("intro");
+const introVariant = INTRO_VARIANTS[introParam || "1"] || null;
+
+const intro = {
+  active: !!introVariant,
+  phase: 0,
+  time: 0,
+  phases: introVariant ? [
+    ["blank", 600],
+    ["title", introVariant.hold],
+    ["titleOut", 900],
+    ["gap", 450],
+    ["credit", 1600],
+    ["reveal", 1600]
+  ] : []
+};
+
+// --- 1-bit text masks (same method as intro_concepts.html)
+
+function rasterText(str, family, size) {
+  const font = `${size}px "${family}"`;
+  const c = document.createElement("canvas");
+  const x = c.getContext("2d");
+  x.font = font;
+  c.width = Math.ceil(x.measureText(str).width + size * 2);
+  c.height = size * 2;
+  x.font = font;
+  x.fillText(str, size * 0.5, Math.round(size * 1.4));
+  const d = x.getImageData(0, 0, c.width, c.height).data;
+
+  let minX = c.width, minY = c.height, maxX = -1, maxY = -1;
+  for (let y = 0; y < c.height; y++) {
+    for (let px = 0; px < c.width; px++) {
+      if (d[(y * c.width + px) * 4 + 3] >= 128) {
+        minX = Math.min(minX, px); maxX = Math.max(maxX, px);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      }
+    }
+  }
+  const w = maxX - minX + 1, h = maxY - minY + 1;
+  const m = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let px = 0; px < w; px++) {
+      m[y * w + px] = d[((y + minY) * c.width + px + minX) * 4 + 3] >= 128 ? 1 : 0;
+    }
+  }
+  return { w, h, d: m };
+}
+
+// one line of worn print: ghost ink 1px down-right, ink on top,
+// then knocked out in soft clumps. Returned at grid resolution.
+function inkLine(str, size, wearAmount, seed, color = INK) {
+  const m = rasterText(str, "VT323", size);
+  const w = m.w + 1, h = m.h + 1;
+  const data = new Uint8ClampedArray(w * h * 4);
+  const paint = (ox, oy, c) => {
+    for (let y = 0; y < m.h; y++) {
+      for (let x = 0; x < m.w; x++) {
+        if (!m.d[y * m.w + x]) continue;
+        const i = ((y + oy) * w + x + ox) * 4;
+        data[i] = c[0]; data[i + 1] = c[1]; data[i + 2] = c[2]; data[i + 3] = 255;
+      }
+    }
+  };
+  paint(1, 1, GHOST);
+  paint(0, 0, color);
+
+  const rand = makeRng(seed);
+  const cell = 3;
+  const cw = Math.ceil(w / cell) + 1;
+  const coarse = new Float32Array(cw * (Math.ceil(h / cell) + 1)).map(() => rand());
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (!data[i + 3]) continue;
+      const c = coarse[Math.floor(y / cell) * cw + Math.floor(x / cell)];
+      if (rand() < wearAmount * c * c * 2.2) data[i + 3] = 0;
+    }
+  }
+
+  const canvasLine = document.createElement("canvas");
+  canvasLine.width = w;
+  canvasLine.height = h;
+  canvasLine.getContext("2d").putImageData(new ImageData(data, w, h), 0, 0);
+  return canvasLine;
+}
+
+// --- layers, rebuilt on resize
+
+const paperLayer = document.createElement("canvas");
+const titleLayer = document.createElement("canvas");
+const creditLayer = document.createElement("canvas");
+const revealLayer = document.createElement("canvas");
+const scratch = document.createElement("canvas");
+let titlePix = 1;
+let titlePan = 0;   // extra width the pan variant slides across
+
+function blit(target, src, x, y, pw, ph) {
+  const t = target.getContext("2d");
+  t.imageSmoothingEnabled = false;
+  t.drawImage(src, Math.round(x), Math.round(y), src.width * pw, src.height * ph);
+}
+
+function snap(v, pix) {
+  return Math.round(v / pix) * pix;
+}
+
+function layoutTitle(layout, cw, ch) {
+  if (layout === "line" || layout === "pan") {
+    const line = inkLine("SUGAR / HONEY / ICED TEA", 36, 0.3, 177);
+    const pix = layout === "line"
+      ? Math.max(1, Math.floor(cw * 0.94 / line.width))
+      : Math.max(1, Math.floor(ch * 0.5 / line.height));
+    const tw = line.width * pix;
+    titleLayer.width = Math.max(cw, tw);
+    titleLayer.height = ch;
+    titlePan = Math.max(0, tw - cw * 0.92);
+    blit(titleLayer, line,
+      layout === "line" ? snap((cw - tw) / 2, pix) : 0,
+      snap((ch - line.height * pix) / 2, pix), pix, pix);
+    return pix;
+  }
+
+  // stack / justify: three lines of equal height
+  const lines = ["SUGAR /", "HONEY /", "ICED TEA"].map((s, i) => inkLine(s, 36, 0.3, 177 + i));
+  const lh = Math.max(...lines.map(l => l.height));
+  const gap = Math.round(lh * 0.22);
+  const maxW = Math.max(...lines.map(l => l.width));
+  const pixY = Math.max(1, Math.floor(Math.min(
+    ch * 0.9 / (lh * 3 + gap * 2),
+    layout === "stack" ? cw * 0.9 / maxW : Infinity)));
+  titleLayer.width = cw;
+  titleLayer.height = ch;
+  titlePan = 0;
+  let y = snap((ch - (lh * 3 + gap * 2) * pixY) / 2, pixY);
+  for (const line of lines) {
+    const pixX = layout === "stack" ? pixY : Math.max(1, Math.floor(cw * 0.95 / line.width));
+    blit(titleLayer, line, snap((cw - line.width * pixX) / 2, pixX), y, pixX, pixY);
+    y += (lh + gap) * pixY;
+  }
+  return pixY;
+}
+
+function buildIntro() {
+  if (!introVariant) return;
+  const cw = canvas.width, ch = canvas.height;
+
+  // same seed and size as the world paper, so the reveal only
+  // brings in the ant, crumbs and hairs; the paper itself stays put
+  paperLayer.width = cw;
+  paperLayer.height = ch;
+  const p = paperLayer.getContext("2d");
+  p.imageSmoothingEnabled = false;
+  p.drawImage(buildPaper(makeRng(WORLD_SEED), Math.ceil(W / PAPER_PIXEL), Math.ceil(H / PAPER_PIXEL)), 0, 0, cw, ch);
+  const r = Math.hypot(cw / 2, ch / 2);
+  const g = p.createRadialGradient(cw / 2, ch / 2, r * 0.35, cw / 2, ch / 2, r);
+  g.addColorStop(0, "rgba(255,255,255,0)");
+  g.addColorStop(1, "rgba(92,74,56,0.55)");
+  // multiply, exactly like the world vignette, or the dissolve shows seams
+  p.globalCompositeOperation = "multiply";
+  p.fillStyle = g;
+  p.fillRect(0, 0, cw, ch);
+  p.globalCompositeOperation = "source-over";
+
+  titlePix = layoutTitle(introVariant.layout, cw, ch);
+
+  // creator credit: small, short, same worn ink
+  const credit = inkLine("@1300dress", 22, 0.15, 311, CREDIT_INK);
+  const cpix = Math.max(1, Math.round(ch * 0.055 / credit.height));
+  creditLayer.width = cw;
+  creditLayer.height = ch;
+  blit(creditLayer, credit,
+    snap((cw - credit.width * cpix) / 2, cpix),
+    snap((ch - credit.height * cpix) / 2, cpix), cpix, cpix);
+
+  revealLayer.width = cw;
+  revealLayer.height = ch;
+  const rv = revealLayer.getContext("2d");
+  rv.drawImage(paperLayer, 0, 0);
+  rv.drawImage(creditLayer, 0, 0);
+
+  scratch.width = cw;
+  scratch.height = ch;
+}
+
+// --- dissolves
+
+const dissolveMask = document.createElement("canvas");
+let dissolveCell = 0;
+let dissolveThresholds = null;
+
+function prepareMask(cell) {
+  if (cell === dissolveCell && dissolveMask.width === Math.ceil(canvas.width / cell)) return;
+  dissolveCell = cell;
+  dissolveMask.width = Math.ceil(canvas.width / cell);
+  dissolveMask.height = Math.ceil(canvas.height / cell);
+  const rand = makeRng(WORLD_SEED + 9);
+  dissolveThresholds = new Float32Array(dissolveMask.width * dissolveMask.height).map(() => rand());
+}
+
+// draw src with `amount` (0..1) of it gone
+function drawDissolved(src, dx, amount, type) {
+  if (amount <= 0) {
+    ctx.drawImage(src, dx, 0);
+    return;
+  }
+  if (amount >= 1) return;
+
+  if (type === "film") {
+    ctx.globalAlpha = 1 - amount;
+    ctx.drawImage(src, dx, 0);
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  // "ink": cells are the title's own pixels; "pixel": coarse blocks
+  const cell = type === "ink" ? titlePix : Math.round(10 * DPR);
+  prepareMask(cell);
+  const m = dissolveMask.getContext("2d");
+  const img = m.createImageData(dissolveMask.width, dissolveMask.height);
+  for (let i = 0; i < dissolveThresholds.length; i++) {
+    img.data[i * 4 + 3] = dissolveThresholds[i] >= amount ? 255 : 0;
+  }
+  m.putImageData(img, 0, 0);
+
+  const s = scratch.getContext("2d");
+  s.globalCompositeOperation = "source-over";
+  s.clearRect(0, 0, scratch.width, scratch.height);
+  s.drawImage(src, dx, 0);
+  s.globalCompositeOperation = "destination-in";
+  s.imageSmoothingEnabled = false;
+  s.drawImage(dissolveMask, 0, 0, dissolveMask.width * cell, dissolveMask.height * cell);
+  s.globalCompositeOperation = "source-over";
+  ctx.drawImage(scratch, 0, 0);
+}
+
+function skipIntro() {
+  if (!intro.active) return;
+  const reveal = intro.phases.findIndex(([name]) => name === "reveal");
+  if (intro.phase < reveal) {
+    intro.phase = reveal;
+    intro.time = 0;
+  }
+}
+
+window.addEventListener("keydown", skipIntro);
+window.addEventListener("pointerdown", skipIntro);
+
+function updateIntro(dt) {
+  intro.time += dt;
+  while (intro.active && intro.time >= intro.phases[intro.phase][1]) {
+    intro.time -= intro.phases[intro.phase][1];
+    intro.phase++;
+    if (intro.phase >= intro.phases.length) intro.active = false;
+  }
+}
+
+function drawIntro() {
+  const [name, dur] = intro.phases[intro.phase];
+  const t = intro.time / dur;
+
+  // pan: ease across the line while it is on screen
+  let dx = 0;
+  if (titlePan) {
+    const span = intro.phases[1][1] + intro.phases[2][1];
+    const tt = name === "title" ? intro.time / span
+      : name === "titleOut" ? (intro.phases[1][1] + intro.time) / span : 0;
+    const e = tt < 0.5 ? 2 * tt * tt : 1 - Math.pow(-2 * tt + 2, 2) / 2;
+    dx = Math.round(canvas.width * 0.04 - e * titlePan);
+  }
+
+  if (name === "reveal") {
+    drawDissolved(revealLayer, 0, t, introVariant.reveal);
+    return;
+  }
+  ctx.drawImage(paperLayer, 0, 0);
+  if (name === "title") ctx.drawImage(titleLayer, dx, 0);
+  if (name === "titleOut") drawDissolved(titleLayer, dx, t, introVariant.out);
+  if (name === "credit") ctx.drawImage(creditLayer, 0, 0);
+}
+
+// ==================================================
 // LOOP
 // ==================================================
 
@@ -495,7 +799,9 @@ function loop(time) {
   const dt = lastTime ? Math.min(time - lastTime, 100) : 0;
   lastTime = time;
 
-  updatePlayer(dt);
+  // the ant stays put (idle) until the intro has handed over
+  if (intro.active) updateIntro(dt);
+  else updatePlayer(dt);
   pressed.clear();
   updateAnimation(dt);
 
@@ -504,6 +810,7 @@ function loop(time) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(world, 0, 0);
   drawPlayer();
+  if (intro.active) drawIntro();
   drawGrain();
 
   requestAnimationFrame(loop);
@@ -517,13 +824,21 @@ window.addEventListener("pointerdown", () => canvas.focus());
 
 // Build stamp: lets you confirm in DevTools that the browser is not
 // running a cached older index.html
-console.info("[SUGAR] build: world-visual-01");
+console.info("[SUGAR] build: intro-sequence-draft-01");
 
-Promise.all([loadAnimations(), loadObjects()])
+// title font; give up after 3s so a slow network never blocks the game
+const introFont = Promise.race([
+  document.fonts.load('36px "VT323"'),
+  new Promise(r => setTimeout(r, 3000))
+]);
+
+Promise.all([loadAnimations(), loadObjects(), introFont])
   .then(() => {
     buildGrain();
     buildWorld();
+    buildIntro();
     window.addEventListener("resize", buildWorld);
+    window.addEventListener("resize", buildIntro);
     // initial spawn only; never reset inside the loop
     player.x = W / 2;
     player.y = H / 2;
