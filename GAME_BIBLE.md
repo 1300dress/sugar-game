@@ -878,7 +878,7 @@ Everything else can wait.
 
 # 29. TITLE SEQUENCE
 
-**STATUS: DRAFT (variant not chosen yet)**
+**STATUS: CONFIRMED (intro draft 2)**
 
 Director decisions:
 
@@ -888,3 +888,12 @@ Director decisions:
 - 타이포 방향: 오락실 픽셀 글자를 종이에 인쇄된 것처럼 바랜 세피아로 처리한다
   (`intro_concepts.html` 10 WORN 기준: 단말기 글꼴, 잉크 빠짐, 1px 어긋난 잔상).
 - 순서: 타이틀 → 창작자명 `@1300dress` 짧게 → 디졸브되며 개미가 보인다.
+- 배치: 세 단어를 같은 크기로 세 줄 쌓는다 (`SUGAR /` `HONEY /` `ICED TEA`).
+
+| 순서 | 길이 |
+|---|---:|
+| 빈 종이 | 0.6초 |
+| 타이틀 | 2초 |
+| 뚝 끊겨 사라짐 (빈 종이) | 0.3초 |
+| `@1300dress` | 2초 |
+| 픽셀 디졸브, 개미 등장 | 1.8초 |
