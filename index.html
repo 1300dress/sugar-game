@@ -666,12 +666,21 @@ const CREDIT_INK = [92, 74, 56];
 const introEnabled = new URLSearchParams(location.search).get("intro") !== "0";
 
 // title cuts out hard, the credit dissolves into the ant world
+// Timed from the start of the music: the title lands on the
+// clink at 0.764s. Without music it runs on the frame clock.
 const intro = {
   active: introEnabled,
+  started: false,       // false until the music (or the fallback clock) starts
+  needsGesture: false,  // autoplay was blocked: show the key prompt
+  clock: 0,         // ms into the intro: music time, or frame time as fallback
+  offset: 0,        // ms added by skipping
+  lastMusic: -1,    // last music time seen (ms)
+  stall: 0,         // ms the music clock has not moved while playing
+  musicLost: false, // music stalled for good: frame clock takes over
   phase: 0,
   time: 0,
   phases: [
-    ["blank", 600],
+    ["blank", 764],
     ["title", 2200],
     ["gap", 1300],
     ["credit", 2100],
@@ -755,6 +764,7 @@ const paperLayer = document.createElement("canvas");
 const titleLayer = document.createElement("canvas");
 const creditLayer = document.createElement("canvas");
 const revealLayer = document.createElement("canvas");
+const promptLayer = document.createElement("canvas");
 const scratch = document.createElement("canvas");
 
 function blit(target, src, x, y, pw, ph) {
@@ -807,6 +817,15 @@ function buildIntro() {
   blit(creditLayer, credit,
     snap((cw - credit.width * cpix) / 2, cpix),
     snap((ch - credit.height * cpix) / 2, cpix), cpix, cpix);
+
+  // shown only while the browser waits for a key before sound can play
+  const prompt = inkLine("PRESS ANY KEY", 16, 0.12, 401, CREDIT_INK);
+  const ppix = Math.max(1, Math.round(ch * 0.035 / prompt.height));
+  promptLayer.width = cw;
+  promptLayer.height = ch;
+  blit(promptLayer, prompt,
+    snap((cw - prompt.width * ppix) / 2, ppix),
+    snap((ch - prompt.height * ppix) / 2, ppix), ppix, ppix);
 
   revealLayer.width = cw;
   revealLayer.height = ch;
@@ -861,25 +880,182 @@ function drawDissolved(src, amount) {
   ctx.drawImage(scratch, 0, 0);
 }
 
-function skipIntro() {
-  if (!intro.active) return;
-  const reveal = intro.phases.findIndex(([name]) => name === "reveal");
-  if (intro.phase < reveal) {
-    intro.phase = reveal;
-    intro.time = 0;
+// ==================================================
+// MUSIC (GAME_BIBLE §21, §31)
+// Restaurant chatter, from the first visit through the SUGAR chapter.
+// Streamed by two <audio> elements (never decoded whole into memory)
+// that take turns, crossfading at each loop seam.
+// ==================================================
+
+const MUSIC_SRC = "audio/restaurant_chatter.m4a";
+const MUSIC_VOLUME = 0.5;     // room tone under everything, not a soundtrack
+const MUSIC_FADE_IN = 0.15;   // s, only to avoid a click at the very start
+const MUSIC_XFADE = 2.0;      // s of overlap at each loop seam
+const MUSIC_LOOP_FROM = 2.0;  // s, later passes skip the title clink at 0.8s
+
+const music = {
+  players: [new Audio(MUSIC_SRC), new Audio(MUSIC_SRC)],
+  current: 0,
+  playing: false,   // true once play() has actually succeeded
+  failed: false,    // file missing or unplayable: the game runs silent
+  stopping: null    // { from, until } while fading out for good
+};
+for (const a of music.players) {
+  a.preload = "auto";
+  a.volume = 0;
+}
+music.players[1].preload = "none";   // fetched only when the first loop ends
+music.players[0].addEventListener("error", () => { music.failed = true; });
+
+// must be called from a key/click handler unless autoplay is allowed
+function startMusic() {
+  if (music.failed) return Promise.reject(new Error("no music"));
+  return music.players[0].play().then(() => { music.playing = true; });
+}
+
+function musicVolume(t) {
+  return MUSIC_VOLUME * Math.min(1, t);
+}
+
+function updateMusic() {
+  if (!music.playing) return;
+  const cur = music.players[music.current];
+  const next = music.players[1 - music.current];
+  const now = performance.now();
+
+  // fade out for good (end of the SUGAR chapter)
+  let master = 1;
+  if (music.stopping) {
+    master = Math.max(0, (music.stopping.until - now) / (music.stopping.until - music.stopping.from));
+    if (master === 0) {
+      cur.pause();
+      next.pause();
+      music.playing = false;
+      return;
+    }
+  }
+
+  // first pass fades in briefly from 0
+  const fadeIn = cur.currentTime / MUSIC_FADE_IN;
+
+  // start fetching the other player well before the seam
+  if (cur.duration && next.preload === "none" && cur.currentTime >= cur.duration - MUSIC_XFADE - 15) {
+    next.preload = "auto";
+    next.load();
+  }
+
+  if (cur.duration && cur.currentTime >= cur.duration - MUSIC_XFADE) {
+    if (next.paused) {
+      next.currentTime = MUSIC_LOOP_FROM;
+      next.play().catch(() => {});
+    }
+    // equal-power crossfade
+    const t = Math.min(1, (cur.currentTime - (cur.duration - MUSIC_XFADE)) / MUSIC_XFADE);
+    cur.volume = MUSIC_VOLUME * master * Math.cos(t * Math.PI / 2);
+    next.volume = MUSIC_VOLUME * master * Math.sin(t * Math.PI / 2);
+    if (cur.ended || t >= 1) {
+      cur.pause();
+      music.current = 1 - music.current;
+    }
+  } else {
+    cur.volume = musicVolume(fadeIn) * master;
   }
 }
 
-window.addEventListener("keydown", skipIntro);
-window.addEventListener("pointerdown", skipIntro);
+// for the end of the SUGAR chapter (not wired to anything yet)
+function stopMusic(ms = 3000) {
+  const now = performance.now();
+  music.stopping = { from: now, until: now + ms };
+}
+
+// a hidden tab pauses the room; it comes back where it was
+let pausedByTab = [];
+document.addEventListener("visibilitychange", () => {
+  if (!music.playing) return;
+  if (document.hidden) {
+    pausedByTab = music.players.filter(a => !a.paused);
+    pausedByTab.forEach(a => a.pause());
+  } else {
+    pausedByTab.forEach(a => a.play().catch(() => {}));
+    pausedByTab = [];
+  }
+});
+
+// --- intro control
+
+function introElapsed() {
+  return intro.clock + intro.offset;
+}
+
+// the intro follows the music's own clock so the title lands on the beat;
+// if the music never starts or stalls for 1.5s, frame time carries on
+function tickIntroClock(dt) {
+  const following = music.playing && music.current === 0 && !intro.musicLost;
+  const m = music.players[0].currentTime * 1000;
+  if (following && m > intro.lastMusic) {
+    intro.clock = m;
+    intro.lastMusic = m;
+    intro.stall = 0;
+    return;
+  }
+  if (following) {
+    intro.stall += dt;
+    if (intro.stall < 1500) return;   // hold: the music is just catching up
+    intro.musicLost = true;
+  }
+  intro.clock += dt;
+}
+
+function beginIntro() {
+  intro.started = true;
+  intro.clock = 0;
+}
+
+// try to start straight away; browsers usually block sound until
+// the visitor has pressed something, so then we wait for that
+function tryAutoStart() {
+  if (!intro.active) {
+    // ?intro=0: no title sequence, music still starts on first input
+    return;
+  }
+  startMusic().then(beginIntro, () => {
+    if (music.failed) beginIntro();   // no file: run the intro silent
+    else intro.needsGesture = true;
+  });
+}
+
+function onIntroInput() {
+  // first key or click is the gesture the browser waits for before sound
+  if (!music.playing && !music.failed) startMusic().catch(() => {});
+  if (!intro.active) return;
+  if (!intro.started) {
+    // the clock follows the music once it plays, the frame clock until then
+    beginIntro();
+    return;
+  }
+  // later presses skip to the reveal
+  const revealAt = intro.phases.slice(0, -1).reduce((sum, [, ms]) => sum + ms, 0);
+  const e = introElapsed();
+  if (e < revealAt) intro.offset += revealAt - e;
+}
+
+window.addEventListener("keydown", onIntroInput);
+window.addEventListener("pointerdown", onIntroInput);
 
 function updateIntro(dt) {
-  intro.time += dt;
-  while (intro.active && intro.time >= intro.phases[intro.phase][1]) {
-    intro.time -= intro.phases[intro.phase][1];
-    intro.phase++;
-    if (intro.phase >= intro.phases.length) intro.active = false;
+  if (!intro.started) return;
+  tickIntroClock(dt);
+  let e = introElapsed();
+  for (let i = 0; i < intro.phases.length; i++) {
+    const ms = intro.phases[i][1];
+    if (e < ms) {
+      intro.phase = i;
+      intro.time = e;
+      return;
+    }
+    e -= ms;
   }
+  intro.active = false;
 }
 
 function drawIntro() {
@@ -889,6 +1065,10 @@ function drawIntro() {
     return;
   }
   ctx.drawImage(paperLayer, 0, 0);
+  // waiting for the first key: a small arcade prompt, blinking
+  if (!intro.started && intro.needsGesture && performance.now() % 1200 < 750) {
+    ctx.drawImage(promptLayer, 0, 0);
+  }
   if (name === "title") ctx.drawImage(titleLayer, 0, 0);
   if (name === "credit") ctx.drawImage(creditLayer, 0, 0);
 }
@@ -904,6 +1084,7 @@ function loop(time) {
   lastTime = time;
 
   // the ant stays put (idle) until the intro has handed over
+  updateMusic();
   if (intro.active) updateIntro(dt);
   else updatePlayer(dt);
   pressed.clear();
@@ -936,7 +1117,7 @@ window.addEventListener("pointerdown", () => canvas.focus());
 
 // Build stamp: lets you confirm in DevTools that the browser is not
 // running a cached older index.html
-console.info("[SUGAR] build: star-candy-01");
+console.info("[SUGAR] build: music-01");
 
 // title font; give up after 3s so a slow network never blocks the game
 const introFont = Promise.race([
@@ -954,6 +1135,7 @@ Promise.all([loadAnimations(), loadObjects(), introFont])
     buildGrain();
     buildVignette();
     buildIntro();
+    tryAutoStart();
     window.addEventListener("resize", buildVignette);
     window.addEventListener("resize", () => {
       camera.x = player.x - W / 2;
