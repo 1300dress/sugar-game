@@ -59,9 +59,16 @@ for (const [name, anim] of Object.entries(ANIMATIONS)) {
   }
 }
 
-// Movement speed in world pixels per second (x1.7, director request)
-const WALK_SPEED = 119;
-const RUN_SPEED = 289;
+// Movement speed in world pixels per second
+// (original 70 / 170, x1.7 then x1.3, director request)
+const WALK_SPEED = 155;
+const RUN_SPEED = 375;
+
+// turn frame mapping (index into ANIMATIONS.turn.images)
+// turn_01: larger, darker eyes and shorter abdomen -> faces the viewer
+// turn_02: smaller eyes and longer abdomen -> faces away
+const TURN_FRONT = 0;   // moving down
+const TURN_BACK = 1;    // moving up
 
 // ==================================================
 // CANVAS
@@ -512,15 +519,21 @@ function updatePlayer(dt) {
   }
 
   // ---- RUN / WALK: any of 8 directions on the floor.
-  // Side-view sprite throughout; facing only changes on left/right.
-  // Right = mirrored left sprite.
+  // Straight up/down shows the back/front view (a held turn frame);
+  // anything with left/right uses the side view. Right = mirrored left.
   if (dx !== 0 || dy !== 0) {
     if (dx !== 0) player.facing = dx;
     const speed = running ? RUN_SPEED : WALK_SPEED;
     const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1;  // no faster diagonals
     player.x += dx * norm * speed * dt / 1000;
     player.y += dy * norm * speed * dt / 1000;
-    setAnim(running ? "run" : "walk");
+    if (dx === 0) {
+      setAnim("turn");
+      player.frame = dy < 0 ? TURN_BACK : TURN_FRONT;
+      player.frameTime = 0;  // hold the frame while moving
+    } else {
+      setAnim(running ? "run" : "walk");
+    }
     return;
   }
 
@@ -541,7 +554,8 @@ function drawPlayer() {
   const ay = Math.round(player.y * DPR) - Math.round(camera.y * DPR);
   const s = SPRITE_SCALE[player.anim] * DPR;
 
-  const flip = player.facing === 1;
+  // turn frames are a front/back view and are never mirrored
+  const flip = player.facing === 1 && player.anim !== "turn";
 
   ctx.save();
   ctx.translate(ax, ay);
