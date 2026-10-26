@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SUGAR — Intro Title Concepts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Jersey+10&family=Pixelify+Sans:wght@700&family=Press+Start+2P&family=Rubik+Mono+One&family=Silkscreen:wght@400;700&family=VT323&display=block" rel="stylesheet">
+<style>
+  html, body {
+    margin: 0;
+    background: #191512;
+    color: #d6cebe;
+    font-family: "Courier New", monospace;
+  }
+
+  header {
+    padding: 28px 24px 8px;
+    letter-spacing: 3px;
+    font-size: 12px;
+    opacity: .7;
+  }
+
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(560px, 100%), 1fr));
+    gap: 28px 20px;
+    padding: 16px 24px 48px;
+  }
+
+  figure {
+    margin: 0;
+    cursor: zoom-in;
+  }
+
+  figure canvas {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    image-rendering: pixelated;
+  }
+
+  figcaption {
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    letter-spacing: 1px;
+  }
+
+  figcaption b {
+    letter-spacing: 3px;
+    margin-right: 8px;
+  }
+
+  #full {
+    position: fixed;
+    inset: 0;
+    display: none;
+    background: #191512;
+    cursor: zoom-out;
+  }
+
+  #full.open {
+    display: block;
+  }
+
+  #full canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+
+<header>SUGAR / HONEY / ICED TEA — INTRO TITLE CONCEPTS · 클릭하면 전체 화면 · ← → 넘기기 · ESC 닫기</header>
+<div id="grid"></div>
+<div id="full"><canvas></canvas></div>
+
+<script>
+// ==================================================
+// PALETTE — faded sepia print. No pure colors.
+// ==================================================
+
+const INK    = [42, 34, 27];
+const BROWN  = [92, 74, 56];
+const UMBER  = [128, 104, 78];
+const TAN    = [168, 146, 112];
+const CREAM  = [230, 220, 198];
+const RUST   = [128, 70, 50];
+const RUST_L = [168, 108, 78];
+const OCHRE  = [176, 140, 76];
+
+const PAPER_COLOR = [214, 206, 190];
+
+function makeRng(seed) {
+  return function () {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ==================================================
+// MASKS — 1-bit pixel shapes on the title grid
+// { w, h, d: Uint8Array, ox, oy }
+// ==================================================
+
+function emptyMask(w, h, ox = 0, oy = 0) {
+  return { w, h, d: new Uint8Array(w * h), ox, oy };
+}
+
+function cropMask(src, w, h) {
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (src[y * w + x]) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return emptyMask(1, 1);
+  const m = emptyMask(maxX - minX + 1, maxY - minY + 1);
+  for (let y = 0; y < m.h; y++) {
+    for (let x = 0; x < m.w; x++) {
+      m.d[y * m.w + x] = src[(y + minY) * w + (x + minX)];
+    }
+  }
+  return m;
+}
+
+// Draw with the browser, then threshold to hard 1-bit pixels.
+// Non-pixel fonts become pixel letters this way.
+function rasterize(w, h, draw, threshold = 128) {
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const x = c.getContext("2d");
+  draw(x);
+  const d = x.getImageData(0, 0, w, h).data;
+  const src = new Uint8Array(w * h);
+  for (let i = 0; i < src.length; i++) src[i] = d[i * 4 + 3] >= threshold ? 1 : 0;
+  return cropMask(src, w, h);
+}
+
+function text(str, family, size, opt = {}) {
+  const font = `${opt.weight || ""} ${size}px "${family}"`;
+  const probe = document.createElement("canvas").getContext("2d");
+  probe.font = font;
+  probe.letterSpacing = (opt.spacing || 0) + "px";
+  const w = Math.ceil(probe.measureText(str).width + size * 2);
+  return rasterize(w, size * 2, x => {
+    x.font = font;
+    x.letterSpacing = (opt.spacing || 0) + "px";
+    x.fillStyle = "#000";
+    x.fillText(str, size * 0.5, Math.round(size * 1.4));
+  }, opt.threshold);
+}
+
+function rect(w, h) {
+  const m = emptyMask(w, h);
+  m.d.fill(1);
+  return m;
+}
+
+function ellipse(w, h) {
+  return rasterize(w + 2, h + 2, x => {
+    x.beginPath();
+    x.ellipse(w / 2 + 1, h / 2 + 1, w / 2, h / 2, 0, 0, Math.PI * 2);
+    x.fill();
+  });
+}
+
+function star(size, inner = 0.22) {
+  return rasterize(size + 2, size + 2, x => {
+    const c = size / 2 + 1;
+    x.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? size * inner : size / 2;
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      x.lineTo(c + Math.cos(a) * r, c + Math.sin(a) * r);
+    }
+    x.fill();
+  }, 100);
+}
+
+// square dilation: chunky outlines like old title logos
+function dilate(m, r) {
+  const o = emptyMask(m.w + r * 2, m.h + r * 2, m.ox - r, m.oy - r);
+  for (let y = 0; y < m.h; y++) {
+    for (let x = 0; x < m.w; x++) {
+      if (!m.d[y * m.w + x]) continue;
+      for (let dy = 0; dy <= r * 2; dy++) {
+        o.d.fill(1, (y + dy) * o.w + x, (y + dy) * o.w + x + r * 2 + 1);
+      }
+    }
+  }
+  return o;
+}
+
+// a minus b, both in the same coordinate space
+function subtract(a, b) {
+  const o = emptyMask(a.w, a.h, a.ox, a.oy);
+  for (let y = 0; y < a.h; y++) {
+    for (let x = 0; x < a.w; x++) {
+      if (!a.d[y * a.w + x]) continue;
+      const bx = x + a.ox - b.ox;
+      const by = y + a.oy - b.oy;
+      const inB = bx >= 0 && by >= 0 && bx < b.w && by < b.h && b.d[by * b.w + bx];
+      o.d[y * a.w + x] = inB ? 0 : 1;
+    }
+  }
+  return o;
+}
+
+// ==================================================
+// PAINTS — (localX, localY, mask) -> color or null
+// ==================================================
+
+const solid = c => () => c;
+
+// hard horizontal bands, top to bottom
+const bands = colors => (x, y, m) => colors[Math.min(colors.length - 1, Math.floor(y / m.h * colors.length))];
+
+const BAYER = [
+  [0, 8, 2, 10],
+  [12, 4, 14, 6],
+  [3, 11, 1, 9],
+  [15, 7, 13, 5]
+];
+
+// ordered dither, like halftone on cheap print
+const dither = (c, levelFn) => (x, y, m) =>
+  BAYER[y & 3][x & 3] < levelFn(x, y, m) * 16 ? c : null;
+
+// drop every Nth row, like a CRT screen photographed and printed
+const scan = (paint, every = 3) => (x, y, m) =>
+  (y % every === every - 1) ? null : paint(x, y, m);
+
+// ==================================================
+// COMPOSITION — layers placed on one pixel grid
+// ==================================================
+
+class Comp {
+  constructor() { this.ops = []; }
+
+  put(m, x, y, paint) {
+    this.ops.push({ m, x: x + m.ox, y: y + m.oy, paint });
+    return this;
+  }
+
+  build() {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const o of this.ops) {
+      minX = Math.min(minX, o.x);
+      minY = Math.min(minY, o.y);
+      maxX = Math.max(maxX, o.x + o.m.w);
+      maxY = Math.max(maxY, o.y + o.m.h);
+    }
+    const w = maxX - minX;
+    const h = maxY - minY;
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (const o of this.ops) {
+      const { m } = o;
+      for (let y = 0; y < m.h; y++) {
+        for (let x = 0; x < m.w; x++) {
+          if (!m.d[y * m.w + x]) continue;
+          const c = o.paint(x, y, m);
+          if (!c) continue;
+          const i = ((o.y - minY + y) * w + (o.x - minX + x)) * 4;
+          data[i] = c[0];
+          data[i + 1] = c[1];
+          data[i + 2] = c[2];
+          data[i + 3] = 255;
+        }
+      }
+    }
+    return { w, h, data };
+  }
+}
+
+const centerX = (outer, inner) => Math.round((outer.w - inner.w) / 2);
+
+// ==================================================
+// THE 10 CONCEPTS
+// ==================================================
+
+const CONCEPTS = [
+  {
+    name: "LEGEND",
+    note: "젤다 레퍼런스. 굵은 세리프를 픽셀로 깨뜨리고 잉크-크림-잉크 이중 외곽선. 뒤에 바랜 별사탕 실루엣.",
+    build() {
+      const C = new Comp();
+      const main = text("SUGAR", "Alfa Slab One", 36, { spacing: 1 });
+      const sub = text("/ HONEY / ICED TEA", "Press Start 2P", 8);
+      const s = star(Math.round(main.h * 2.8), 0.42);
+      C.put(s, centerX(main, s), -Math.round(main.h * 0.95), dither(OCHRE, () => 0.7));
+      C.put(dilate(main, 3), 0, 0, solid(INK));
+      C.put(dilate(main, 2), 0, 0, solid(CREAM));
+      C.put(dilate(main, 1), 0, 0, solid(INK));
+      C.put(main, 0, 0, bands([RUST_L, RUST_L, RUST, RUST, BROWN]));
+      const sx = main.w - sub.w, sy = main.h + 7;
+      C.put(dilate(sub, 1), sx, sy, solid(INK));
+      C.put(sub, sx, sy, solid(CREAM));
+      return C;
+    }
+  },
+  {
+    name: "PLATE",
+    note: "남코 클래식 레퍼런스. 입체 테두리 판 위에 길쭉한 글자, 2줄 간격 줄무늬 채움. 양옆 기둥은 디더링.",
+    build() {
+      const C = new Comp();
+      const main = text("SUGAR", "Jersey 10", 44, { spacing: 3 });
+      const sub = text("HONEY / ICED TEA", "Press Start 2P", 8);
+      const pw = Math.max(main.w, sub.w) + 22, ph = main.h + sub.h + 30;
+      const mx = centerX({ w: pw }, main);
+      C.put(rect(pw + 4, ph + 4), -2, -2, solid(INK));
+      C.put(rect(pw, ph), 0, 0, (x, y) =>
+        x < 2 || y < 2 ? CREAM : (x >= pw - 2 || y >= ph - 2 ? BROWN : UMBER));
+      const strip = rect(pw - 12, sub.h + 8);
+      const stripY = ph - strip.h - 6;
+      C.put(strip, 6, stripY, solid(TAN));
+      C.put(sub, centerX({ w: pw }, sub), stripY + 4, solid(INK));
+      for (const px of [-10, pw + 4]) {
+        C.put(rect(6, ph + 8), px, -4, (x, y) => (x + y) % 2 ? CREAM : BROWN);
+      }
+      C.put(dilate(main, 1), mx + 2, 9, solid(INK));
+      C.put(dilate(main, 1), mx, 7, solid(INK));
+      C.put(main, mx, 7, (x, y) => (y % 4 < 2 ? CREAM : OCHRE));
+      return C;
+    }
+  },
+  {
+    name: "BADGE",
+    note: "팩매니아 레퍼런스. 줄무늬 타원 배지 위 돌출 블록 글자, 주변에 작은 별.",
+    build() {
+      const C = new Comp();
+      const main = text("SUGAR", "Rubik Mono One", 24, { spacing: 1 });
+      const sub = text("/ HONEY / ICED TEA", "Press Start 2P", 8);
+      const ew = main.w + 52, eh = main.h + 30;
+      C.put(ellipse(ew + 4, eh + 4), -2, -2, solid(INK));
+      C.put(ellipse(ew, eh), 0, 0, (x, y) => (Math.floor(y / 3) % 2 ? CREAM : RUST_L));
+      const tx = 26, ty = 13;
+      for (let k = 5; k >= 1; k--) C.put(dilate(main, 1), tx + k, ty + k, solid(INK));
+      for (let k = 4; k >= 1; k--) C.put(main, tx + k, ty + k, solid(k > 2 ? BROWN : UMBER));
+      C.put(dilate(main, 1), tx, ty, solid(INK));
+      C.put(main, tx, ty, bands([CREAM, TAN, TAN, UMBER]));
+      const stars = [[-6, 2, 11], [ew - 6, -6, 13], [ew * 0.45, -12, 9], [ew - 20, eh - 4, 9], [8, eh - 8, 7]];
+      for (const [x, y, sz] of stars) {
+        const st = star(sz);
+        C.put(dilate(st, 1), Math.round(x), y, solid(INK));
+        C.put(st, Math.round(x), y, solid(OCHRE));
+      }
+      C.put(sub, centerX({ w: ew }, sub), eh + 10, solid(INK));
+      return C;
+    }
+  },
+  {
+    name: "8-BIT",
+    note: "가장 단순한 8비트. 세 단어를 세로로 쌓고 딱딱한 그림자. 아래 작은 PRESS ANY KEY (선택).",
+    build() {
+      const C = new Comp();
+      const a = text("SUGAR", "Press Start 2P", 32);
+      const b = text("HONEY", "Press Start 2P", 16);
+      const c = text("ICED TEA", "Press Start 2P", 16);
+      const p = text("PRESS ANY KEY", "Press Start 2P", 8);
+      let y = 0;
+      for (const [m, col] of [[a, INK], [b, BROWN], [c, BROWN]]) {
+        const x = centerX(a, m);
+        C.put(m, x + 2, y + 2, solid(TAN));
+        C.put(m, x, y, solid(col));
+        y += m.h + 8;
+      }
+      C.put(p, centerX(a, p), y + 18, solid(UMBER));
+      return C;
+    }
+  },
+  {
+    name: "SPECIMEN",
+    note: "도감 라벨 x 픽셀. 왼쪽 정렬, 단어마다 톤이 옅어짐. 위아래 괘선과 작은 표본 번호(임시 문구).",
+    build() {
+      const C = new Comp();
+      const a = text("SUGAR", "Silkscreen", 40, { weight: 700, spacing: 2 });
+      const b = text("/ HONEY", "Silkscreen", 16, { weight: 700, spacing: 1 });
+      const c = text("/ ICED TEA", "Silkscreen", 16, { weight: 700, spacing: 1 });
+      const label = text("SPECIMEN No.01", "Press Start 2P", 8);
+      const W = a.w + 4;
+      C.put(label, 0, 0, solid(BROWN));
+      C.put(rect(W, 1), 0, label.h + 5, solid(INK));
+      let y = label.h + 12;
+      C.put(a, 2, y + 2, dither(UMBER, () => 0.5));
+      C.put(a, 0, y, solid(INK));
+      y += a.h + 8;
+      C.put(b, 0, y, solid(UMBER));
+      y += b.h + 6;
+      C.put(c, 0, y, solid(TAN));
+      y += c.h + 8;
+      C.put(rect(W, 1), 0, y, solid(INK));
+      C.put(rect(W, 1), 0, y + 2, solid(INK));
+      return C;
+    }
+  },
+  {
+    name: "HOLLOW",
+    note: "속이 빈 이중 외곽선. 고무도장이나 오래된 간판 같은 느낌. 종이 결이 글자 안으로 보임.",
+    build() {
+      const C = new Comp();
+      const a = text("SUGAR", "Pixelify Sans", 52, { weight: 700, spacing: 2 });
+      const b = text("HONEY / ICED TEA", "Pixelify Sans", 20, { weight: 700, spacing: 1 });
+      let y = 0;
+      for (const m of [a, b]) {
+        const x = centerX(a, m);
+        const outer = subtract(dilate(m, 3), dilate(m, 2));
+        const inner = subtract(dilate(m, 1), m);
+        C.put(outer, x + 2, y + 2, solid(TAN));
+        C.put(outer, x, y, solid(INK));
+        C.put(inner, x, y, solid(BROWN));
+        y += m.h + 14;
+      }
+      return C;
+    }
+  },
+  {
+    name: "MISPRINT",
+    note: "망점 인쇄 + 판 어긋남. 적갈색 판과 먹 판이 살짝 엇나가게 찍힌 오래된 인쇄물.",
+    build() {
+      const C = new Comp();
+      const main = text("SUGAR", "Rubik Mono One", 32, { spacing: 2 });
+      const sub = text("HONEY / ICED TEA", "Press Start 2P", 8);
+      C.put(main, 3, -2, dither(RUST_L, (x, y, m) => 0.4 + 0.6 * (y / m.h)));
+      C.put(main, 0, 0, dither(INK, (x, y, m) => 0.95 - 0.55 * (y / m.h)));
+      const sx = centerX(main, sub), sy = main.h + 10;
+      C.put(sub, sx + 1, sy - 1, solid(RUST_L));
+      C.put(sub, sx, sy, solid(INK));
+      return C;
+    }
+  },
+  {
+    name: "SCANLINE",
+    note: "브라운관 화면을 찍어서 인쇄한 느낌. 세 줄마다 한 줄씩 빠지고, 황토에서 적갈색으로 띠 그라데이션.",
+    build() {
+      const C = new Comp();
+      const main = text("SUGAR", "Silkscreen", 48, { weight: 700, spacing: 3 });
+      const sub = text("HONEY / ICED TEA", "Silkscreen", 16, { weight: 700, spacing: 2 });
+      const fill = bands([OCHRE, OCHRE, RUST_L, RUST_L, RUST]);
+      C.put(main, 3, 3, scan(solid(TAN)));
+      C.put(main, 0, 0, scan(fill));
+      const sx = centerX(main, sub), sy = main.h + 12;
+      C.put(sub, sx + 2, sy + 2, scan(solid(TAN)));
+      C.put(sub, sx, sy, scan(solid(BROWN)));
+      return C;
+    }
+  },
+  {
+    name: "STARFALL",
+    note: "팩매니아식 깊은 아래쪽 돌출 + 리본 띠. 별사탕을 떠올리게 하는 별이 흩어짐.",
+    build() {
+      const C = new Comp();
+      const main = text("SUGAR", "Jersey 10", 52, { spacing: 3 });
+      const sub = text("HONEY / ICED TEA", "Press Start 2P", 8);
+      const depth = 8;
+      for (let k = depth + 1; k >= 1; k--) C.put(dilate(main, 1), 0, k, solid(INK));
+      for (let k = depth; k >= 1; k--) C.put(main, 0, k, solid(k < 4 ? UMBER : BROWN));
+      C.put(dilate(main, 1), 0, 0, solid(INK));
+      C.put(main, 0, 0, bands([CREAM, CREAM, TAN]));
+      const rw = sub.w + 24, ry = main.h + depth + 10;
+      const rx = centerX(main, { w: rw });
+      C.put(rect(rw + 2, sub.h + 10), rx - 1, ry - 1, solid(INK));
+      C.put(rect(rw, sub.h + 8), rx, ry, solid(TAN));
+      C.put(sub, rx + 12, ry + 4, solid(INK));
+      const stars = [[-18, -6, 11], [main.w + 6, 2, 13], [main.w * 0.38, -16, 9], [-12, main.h - 4, 7], [main.w + 2, main.h + 2, 9]];
+      for (const [x, y, sz] of stars) {
+        const st = star(sz);
+        C.put(dilate(st, 1), Math.round(x), y, solid(INK));
+        C.put(st, Math.round(x), y, solid(CREAM));
+      }
+      return C;
+    }
+  },
+  {
+    name: "WORN",
+    note: "단말기 글꼴 한 줄을 여러 번 복사한 것처럼 잉크가 군데군데 빠짐. 가장 바이블 톤에 가까운 시안.",
+    wear: 0.3,
+    build() {
+      const C = new Comp();
+      const main = text("SUGAR / HONEY / ICED TEA", "VT323", 36);
+      const p = text("PRESS ANY KEY", "VT323", 22);
+      C.put(main, 1, 1, solid(UMBER));
+      C.put(main, 0, 0, solid(INK));
+      C.put(p, centerX(main, p), main.h + 12, solid(BROWN));
+      return C;
+    }
+  }
+];
+
+// ==================================================
+// PRINT — paper, title, wear, grain, vignette
+// ==================================================
+
+function buildPaper(rand, pw, ph) {
+  const paper = document.createElement("canvas");
+  paper.width = pw;
+  paper.height = ph;
+  const p = paper.getContext("2d");
+  const img = p.createImageData(pw, ph);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (rand() - 0.5) * 22;
+    d[i] = PAPER_COLOR[0] + n;
+    d[i + 1] = PAPER_COLOR[1] + n;
+    d[i + 2] = PAPER_COLOR[2] + n * 0.9;
+    d[i + 3] = 255;
+  }
+  p.putImageData(img, 0, 0);
+  p.imageSmoothingEnabled = true;
+  p.globalCompositeOperation = "multiply";
+  for (const [gw, alpha] of [[7, 0.22], [19, 0.14]]) {
+    const gh = Math.max(2, Math.round(gw * ph / pw));
+    const blot = document.createElement("canvas");
+    blot.width = gw;
+    blot.height = gh;
+    const b = blot.getContext("2d");
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        const v = 150 + Math.floor(rand() * 105);
+        b.fillStyle = `rgb(${v},${v - 4},${v - 12})`;
+        b.fillRect(x, y, 1, 1);
+      }
+    }
+    p.globalAlpha = alpha;
+    p.drawImage(blot, 0, 0, pw, ph);
+  }
+  p.globalCompositeOperation = "source-over";
+  for (let i = 0; i < 6; i++) {
+    p.globalAlpha = 0.03 + rand() * 0.05;
+    p.fillStyle = rand() < 0.6 ? "#3b3026" : "#f4efe4";
+    p.fillRect(0, Math.floor(rand() * ph), pw, 1);
+  }
+  for (let i = 0; i < pw * ph / 300; i++) {
+    p.globalAlpha = 0.25 + rand() * 0.5;
+    p.fillStyle = rand() < 0.75 ? "#2a221b" : "#fbf8f1";
+    p.fillRect(Math.floor(rand() * pw), Math.floor(rand() * ph), 1, 1);
+  }
+  return paper;
+}
+
+// knock pixels out of the ink in soft clumps, like a worn print
+function wear(grid, amount, rand) {
+  const cell = 3;
+  const cw = Math.ceil(grid.w / cell) + 1;
+  const ch = Math.ceil(grid.h / cell) + 1;
+  const coarse = new Float32Array(cw * ch).map(() => rand());
+  for (let y = 0; y < grid.h; y++) {
+    for (let x = 0; x < grid.w; x++) {
+      const i = (y * grid.w + x) * 4;
+      if (!grid.data[i + 3]) continue;
+      const c = coarse[Math.floor(y / cell) * cw + Math.floor(x / cell)];
+      if (rand() < amount * c * c * 2.2) grid.data[i + 3] = 0;
+    }
+  }
+}
+
+const built = new Map();
+
+function titleGrid(index) {
+  if (!built.has(index)) {
+    const concept = CONCEPTS[index];
+    const grid = concept.build().build();
+    wear(grid, concept.wear ?? 0.05, makeRng(77 + index));
+    const c = document.createElement("canvas");
+    c.width = grid.w;
+    c.height = grid.h;
+    c.getContext("2d").putImageData(new ImageData(grid.data, grid.w, grid.h), 0, 0);
+    built.set(index, c);
+  }
+  return built.get(index);
+}
+
+function render(canvas, index) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+
+  const rand = makeRng(1017);
+  const paper = buildPaper(rand, Math.ceil(w / 3), Math.ceil(h / 3));
+  ctx.drawImage(paper, 0, 0, canvas.width, canvas.height);
+
+  // title: whole-number pixel scale, as big as fits
+  const title = titleGrid(index);
+  const pix = Math.max(1, Math.floor(Math.min(
+    canvas.width * 0.86 / title.width,
+    canvas.height * 0.64 / title.height)));
+  const tw = title.width * pix;
+  const th = title.height * pix;
+  ctx.globalAlpha = 0.9;
+  ctx.drawImage(title,
+    Math.round((canvas.width - tw) / 2),
+    Math.round(canvas.height * 0.46 - th / 2),
+    tw, th);
+  ctx.globalAlpha = 1;
+
+  // paper texture printed back over the ink
+  ctx.globalCompositeOperation = "multiply";
+  ctx.globalAlpha = 0.35;
+  ctx.drawImage(paper, 0, 0, canvas.width, canvas.height);
+  ctx.globalAlpha = 1;
+
+  // vignette
+  const cx = canvas.width / 2, cy = canvas.height / 2, r = Math.hypot(cx, cy);
+  const g = ctx.createRadialGradient(cx, cy, r * 0.35, cx, cy, r);
+  g.addColorStop(0, "rgba(255,255,255,0)");
+  g.addColorStop(1, "rgba(92,74,56,0.55)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.globalCompositeOperation = "source-over";
+
+  // film grain
+  const grain = document.createElement("canvas");
+  grain.width = grain.height = 96;
+  const gx = grain.getContext("2d");
+  const gi = gx.createImageData(96, 96);
+  const grand = makeRng(5 + index);
+  for (let i = 0; i < gi.data.length; i += 4) {
+    const v = grand() < 0.5 ? 20 : 250;
+    gi.data[i] = v; gi.data[i + 1] = v - 6; gi.data[i + 2] = v - 14;
+    gi.data[i + 3] = Math.floor(grand() * 34);
+  }
+  gx.putImageData(gi, 0, 0);
+  const s = 1.5 * dpr;
+  ctx.save();
+  ctx.setTransform(s, 0, 0, s, 0, 0);
+  ctx.fillStyle = ctx.createPattern(grain, "repeat");
+  ctx.fillRect(0, 0, canvas.width / s, canvas.height / s);
+  ctx.restore();
+}
+
+// ==================================================
+// GALLERY
+// ==================================================
+
+const grid = document.getElementById("grid");
+const full = document.getElementById("full");
+const fullCanvas = full.querySelector("canvas");
+const cards = [];
+let current = -1;
+
+function openFull(i) {
+  current = (i + CONCEPTS.length) % CONCEPTS.length;
+  full.classList.add("open");
+  render(fullCanvas, current);
+  history.replaceState(null, "", "#" + (current + 1));
+}
+
+function closeFull() {
+  current = -1;
+  full.classList.remove("open");
+  history.replaceState(null, "", location.pathname);
+}
+
+full.addEventListener("click", closeFull);
+window.addEventListener("keydown", e => {
+  if (current < 0) return;
+  if (e.key === "Escape") closeFull();
+  if (e.key === "ArrowRight") openFull(current + 1);
+  if (e.key === "ArrowLeft") openFull(current - 1);
+});
+
+const FONTS = [
+  '36px "Alfa Slab One"', '44px "Jersey 10"', '700 26px "Pixelify Sans"',
+  '8px "Press Start 2P"', '24px "Rubik Mono One"', '700 16px "Silkscreen"', '36px "VT323"'
+];
+
+Promise.all(FONTS.map(f => document.fonts.load(f))).then(() => {
+  CONCEPTS.forEach((c, i) => {
+    const fig = document.createElement("figure");
+    const canvas = document.createElement("canvas");
+    const cap = document.createElement("figcaption");
+    cap.innerHTML = `<b>${String(i + 1).padStart(2, "0")} ${c.name}</b>${c.note}`;
+    fig.append(canvas, cap);
+    fig.addEventListener("click", () => openFull(i));
+    grid.append(fig);
+    cards.push(canvas);
+  });
+  cards.forEach((c, i) => render(c, i));
+
+  const n = parseInt(location.hash.slice(1), 10);
+  if (n >= 1 && n <= CONCEPTS.length) openFull(n - 1);
+
+  let t;
+  window.addEventListener("resize", () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      cards.forEach((c, i) => render(c, i));
+      if (current >= 0) render(fullCanvas, current);
+    }, 150);
+  });
+});
+</script>
+
+</body>
+</html>
