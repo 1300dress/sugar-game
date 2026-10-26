@@ -59,15 +59,9 @@ for (const [name, anim] of Object.entries(ANIMATIONS)) {
   }
 }
 
-// Movement speed in screen pixels per second
-const WALK_SPEED = 70;
-const RUN_SPEED = 170;
-
-// turn frame mapping (index into ANIMATIONS.turn.images)
-// turn_01: larger, darker eyes and shorter abdomen -> faces the viewer
-// turn_02: smaller eyes and longer abdomen -> faces away
-const TURN_FRONT = 0;   // ArrowDown / S
-const TURN_BACK = 1;    // ArrowUp / W
+// Movement speed in world pixels per second (x1.7, director request)
+const WALK_SPEED = 119;
+const RUN_SPEED = 289;
 
 // ==================================================
 // CANVAS
@@ -125,13 +119,16 @@ async function loadObjects() {
 // ==================================================
 // WORLD (GAME_BIBLE §6)
 // Procedural paper only: nothing here is hand-drawn art.
-// Built once per resize into an offscreen canvas, then
-// drawn with a single drawImage per frame.
+// The floor is endless: it is cut into square chunks that are
+// generated from their own coordinates the first time the camera
+// sees them, so the same spot always looks the same.
 // ==================================================
 
 const PAPER_COLOR = [214, 206, 190];   // faded sepia paper
 const PAPER_PIXEL = 3;                 // paper is built at 1/3 res, then enlarged
 const WORLD_SEED = 1017;               // same layout on every load
+const CHUNK = 480;                     // chunk size in CSS px (multiple of PAPER_PIXEL)
+const CHUNK_GRID = CHUNK / PAPER_PIXEL;
 
 // small seeded RNG so dust and crumbs don't jump on reload
 function makeRng(seed) {
@@ -143,129 +140,206 @@ function makeRng(seed) {
   };
 }
 
-const world = document.createElement("canvas");
-const wctx = world.getContext("2d");
+function hash2(x, y, seed) {
+  let h = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 2147483647);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
 
-function buildPaper(rand, pw, ph) {
+// smooth value noise in world space, so blotches run across chunk edges
+function valueNoise(x, y, seed) {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  let fx = x - ix, fy = y - iy;
+  fx = fx * fx * (3 - 2 * fx);
+  fy = fy * fy * (3 - 2 * fy);
+  const a = hash2(ix, iy, seed), b = hash2(ix + 1, iy, seed);
+  const c = hash2(ix, iy + 1, seed), d = hash2(ix + 1, iy + 1, seed);
+  return (a + (b - a) * fx) + ((c + (d - c) * fx) - (a + (b - a) * fx)) * fy;
+}
+
+function buildChunk(cx, cy) {
+  const rand = makeRng(Math.floor(hash2(cx, cy, WORLD_SEED) * 4294967296));
+  const n = CHUNK_GRID;
+
+  // 1. paper: grain + uneven print density, at 1/3 res
   const paper = document.createElement("canvas");
-  paper.width = pw;
-  paper.height = ph;
+  paper.width = paper.height = n;
   const p = paper.getContext("2d");
-
-  // base tone + per-pixel grain
-  const img = p.createImageData(pw, ph);
+  const img = p.createImageData(n, n);
   const d = img.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const n = (rand() - 0.5) * 22;
-    d[i]     = PAPER_COLOR[0] + n;
-    d[i + 1] = PAPER_COLOR[1] + n;
-    d[i + 2] = PAPER_COLOR[2] + n * 0.9;
-    d[i + 3] = 255;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const gx = cx * n + x, gy = cy * n + y;
+      // two blotch layers, multiplied in like the old smooth blow-ups
+      const b1 = 150 + 105 * valueNoise(gx / 60, gy / 60, WORLD_SEED + 1);
+      const b2 = 150 + 105 * valueNoise(gx / 22, gy / 22, WORLD_SEED + 2);
+      const f = (1 - 0.22 + 0.22 * b1 / 255) * (1 - 0.14 + 0.14 * b2 / 255);
+      const grain = (rand() - 0.5) * 22;
+      const i = (y * n + x) * 4;
+      d[i]     = (PAPER_COLOR[0] + grain) * f;
+      d[i + 1] = (PAPER_COLOR[1] + grain) * f * 0.995;
+      d[i + 2] = (PAPER_COLOR[2] + grain * 0.9) * f * 0.985;
+      d[i + 3] = 255;
+    }
   }
   p.putImageData(img, 0, 0);
 
-  // uneven print density: tiny random grids blown up smoothly
-  p.imageSmoothingEnabled = true;
-  p.globalCompositeOperation = "multiply";
-  for (const [gw, alpha] of [[7, 0.22], [19, 0.14]]) {
-    const gh = Math.max(2, Math.round(gw * ph / pw));
-    const blot = document.createElement("canvas");
-    blot.width = gw;
-    blot.height = gh;
-    const b = blot.getContext("2d");
-    for (let y = 0; y < gh; y++) {
-      for (let x = 0; x < gw; x++) {
-        const v = 150 + Math.floor(rand() * 105);
-        b.fillStyle = `rgb(${v},${v - 4},${v - 12})`;
-        b.fillRect(x, y, 1, 1);
-      }
-    }
-    p.globalAlpha = alpha;
-    p.drawImage(blot, 0, 0, pw, ph);
+  // scanner streaks: chosen per chunk row so they run straight across
+  const rowRand = makeRng(Math.floor(hash2(0, cy, WORLD_SEED + 3) * 4294967296));
+  const streaks = Math.floor(rowRand() * 4);
+  for (let i = 0; i < streaks; i++) {
+    p.globalAlpha = 0.03 + rowRand() * 0.05;
+    p.fillStyle = rowRand() < 0.6 ? "#3b3026" : "#f4efe4";
+    p.fillRect(0, Math.floor(rowRand() * n), n, 1 + Math.floor(rowRand() * 2));
   }
-
-  // scanner streaks
-  p.globalCompositeOperation = "source-over";
-  for (let i = 0; i < 9; i++) {
-    const dark = rand() < 0.6;
-    p.globalAlpha = 0.03 + rand() * 0.05;
-    p.fillStyle = dark ? "#3b3026" : "#f4efe4";
-    p.fillRect(0, Math.floor(rand() * ph), pw, 1 + Math.floor(rand() * 2));
+  // a rare vertical band, chosen per chunk column
+  const colRand = makeRng(Math.floor(hash2(cx, 0, WORLD_SEED + 4) * 4294967296));
+  if (colRand() < 0.2) {
+    p.globalAlpha = 0.04;
+    p.fillStyle = "#3b3026";
+    p.fillRect(Math.floor(colRand() * n), 0, 2, n);
   }
-  p.globalAlpha = 0.04;
-  p.fillStyle = "#3b3026";
-  p.fillRect(Math.floor(pw * (0.15 + rand() * 0.7)), 0, 2, ph);
 
   // dust specks, dark and light
-  for (let i = 0; i < pw * ph / 260; i++) {
-    const dark = rand() < 0.75;
+  for (let i = 0; i < n * n / 260; i++) {
     p.globalAlpha = 0.25 + rand() * 0.5;
-    p.fillStyle = dark ? "#2a221b" : "#fbf8f1";
-    const s = rand() < 0.85 ? 1 : 2;
-    p.fillRect(Math.floor(rand() * pw), Math.floor(rand() * ph), s, s);
+    p.fillStyle = rand() < 0.75 ? "#2a221b" : "#fbf8f1";
+    const sz = rand() < 0.85 ? 1 : 2;
+    p.fillRect(Math.floor(rand() * n), Math.floor(rand() * n), sz, sz);
   }
+  p.globalAlpha = 1;
 
-  return paper;
-}
-
-function buildWorld() {
-  const rand = makeRng(WORLD_SEED);
-  world.width = canvas.width;
-  world.height = canvas.height;
-
-  // 1. paper, enlarged with hard pixel edges
-  const paper = buildPaper(rand,
-    Math.ceil(W / PAPER_PIXEL), Math.ceil(H / PAPER_PIXEL));
-  wctx.imageSmoothingEnabled = false;
-  wctx.drawImage(paper, 0, 0, world.width, world.height);
-
-  // 2. a few hairs / fibers caught on the scanner glass
-  wctx.lineCap = "round";
-  for (let i = 0; i < 4; i++) {
-    let x = rand() * world.width;
-    let y = rand() * world.height;
+  // 2. decor, drawn live on top (CSS px, relative to the chunk)
+  const hairs = [];
+  if (rand() < 0.3) {
+    // starts near the middle so it never crosses the chunk edge
+    let x = CHUNK * (0.3 + rand() * 0.4);
+    let y = CHUNK * (0.3 + rand() * 0.4);
     let a = rand() * Math.PI * 2;
-    wctx.globalAlpha = 0.18 + rand() * 0.2;
-    wctx.strokeStyle = "#2a221b";
-    wctx.lineWidth = Math.max(1, DPR * 0.8);
-    wctx.beginPath();
-    wctx.moveTo(x, y);
+    const pts = [[x, y]];
     const steps = 10 + Math.floor(rand() * 20);
     for (let s = 0; s < steps; s++) {
       a += (rand() - 0.5) * 0.6;
-      x += Math.cos(a) * 5 * DPR;
-      y += Math.sin(a) * 5 * DPR;
-      wctx.lineTo(x, y);
+      x += Math.cos(a) * 5;
+      y += Math.sin(a) * 5;
+      pts.push([x, y]);
     }
-    wctx.stroke();
+    hairs.push({ pts, alpha: 0.18 + rand() * 0.2 });
   }
 
-  // 3. crumbs, printed into the paper (multiply) rather than pasted on top
-  wctx.globalCompositeOperation = "multiply";
-  const count = Math.max(6, Math.min(22, Math.round(W * H / 70000)));
+  const crumbs = [];
+  const count = 2 + Math.floor(rand() * 4);
   for (let i = 0; i < count; i++) {
-    const img = crumbImages[Math.floor(rand() * crumbImages.length)];
-    const s = (0.45 + rand() * 0.4) * DPR;
-    wctx.save();
-    wctx.globalAlpha = 0.7 + rand() * 0.3;
-    wctx.translate(Math.round(rand() * world.width), Math.round(rand() * world.height));
-    wctx.rotate(rand() * Math.PI * 2);
-    wctx.scale(s, s);
-    wctx.drawImage(img, -img.width / 2, -img.height / 2);
-    wctx.restore();
+    crumbs.push({
+      img: crumbImages[Math.floor(rand() * crumbImages.length)],
+      x: 25 + rand() * (CHUNK - 50),
+      y: 25 + rand() * (CHUNK - 50),
+      s: 0.45 + rand() * 0.4,
+      rot: rand() * Math.PI * 2,
+      alpha: 0.7 + rand() * 0.3
+    });
   }
 
-  // 4. vignette, like the edge of a scanner bed
-  const cx = world.width / 2;
-  const cy = world.height / 2;
+  return { paper, hairs, crumbs };
+}
+
+const chunks = new Map();
+
+function getChunk(cx, cy) {
+  const key = cx + "," + cy;
+  let c = chunks.get(key);
+  if (!c) {
+    c = buildChunk(cx, cy);
+    chunks.set(key, c);
+  }
+  return c;
+}
+
+// camera = world position of the screen's top-left corner (CSS px)
+const camera = { x: 0, y: 0 };
+
+// draw the floor under the camera into target (device px)
+function drawWorld(t, camX, camY, withDecor) {
+  // snap the camera to whole device pixels so nothing shimmers
+  const ox = Math.round(camX * DPR);
+  const oy = Math.round(camY * DPR);
+  const size = CHUNK * DPR;
+  const cx0 = Math.floor(ox / size), cy0 = Math.floor(oy / size);
+  const cx1 = Math.floor((ox + canvas.width) / size);
+  const cy1 = Math.floor((oy + canvas.height) / size);
+
+  t.imageSmoothingEnabled = false;
+  for (let cy = cy0; cy <= cy1; cy++) {
+    for (let cx = cx0; cx <= cx1; cx++) {
+      t.drawImage(getChunk(cx, cy).paper, cx * size - ox, cy * size - oy, size, size);
+    }
+  }
+  if (!withDecor) return;
+
+  t.save();
+  t.lineCap = "round";
+  t.strokeStyle = "#2a221b";
+  t.lineWidth = Math.max(1, DPR * 0.8);
+  for (let cy = cy0; cy <= cy1; cy++) {
+    for (let cx = cx0; cx <= cx1; cx++) {
+      const c = getChunk(cx, cy);
+      const bx = cx * size - ox, by = cy * size - oy;
+      for (const h of c.hairs) {
+        t.globalAlpha = h.alpha;
+        t.beginPath();
+        for (const [x, y] of h.pts) t.lineTo(bx + x * DPR, by + y * DPR);
+        t.stroke();
+      }
+      // crumbs are printed into the paper (multiply), not pasted on top
+      t.globalCompositeOperation = "multiply";
+      for (const k of c.crumbs) {
+        t.save();
+        t.globalAlpha = k.alpha;
+        t.translate(Math.round(bx + k.x * DPR), Math.round(by + k.y * DPR));
+        t.rotate(k.rot);
+        t.scale(k.s * DPR, k.s * DPR);
+        t.drawImage(k.img, -k.img.width / 2, -k.img.height / 2);
+        t.restore();
+      }
+      t.globalCompositeOperation = "source-over";
+    }
+  }
+  t.restore();
+}
+
+// forget chunks far from the camera so memory stays flat
+function pruneChunks() {
+  const size = CHUNK;
+  const cx = Math.floor((camera.x + W / 2) / size);
+  const cy = Math.floor((camera.y + H / 2) / size);
+  const keep = Math.ceil(Math.max(W, H) / size) + 3;
+  for (const key of chunks.keys()) {
+    const [x, y] = key.split(",").map(Number);
+    if (Math.abs(x - cx) > keep || Math.abs(y - cy) > keep) chunks.delete(key);
+  }
+}
+
+// vignette, like the edge of a scanner bed: fixed to the screen
+const vignette = document.createElement("canvas");
+
+function buildVignette() {
+  vignette.width = canvas.width;
+  vignette.height = canvas.height;
+  const v = vignette.getContext("2d");
+  const cx = vignette.width / 2;
+  const cy = vignette.height / 2;
   const r = Math.hypot(cx, cy);
-  const g = wctx.createRadialGradient(cx, cy, r * 0.35, cx, cy, r);
-  g.addColorStop(0, "rgba(255,255,255,0)");
-  g.addColorStop(1, "rgba(92,74,56,0.55)");
-  wctx.globalAlpha = 1;
-  wctx.fillStyle = g;
-  wctx.fillRect(0, 0, world.width, world.height);
-  wctx.globalCompositeOperation = "source-over";
+  const g = v.createRadialGradient(cx, cy, r * 0.35, cx, cy, r);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(1, "rgba(" + [255 - 0.55 * (255 - 92), 255 - 0.55 * (255 - 74), 255 - 0.55 * (255 - 56)].map(Math.round) + ",1)");
+  v.fillStyle = g;
+  v.fillRect(0, 0, vignette.width, vignette.height);
+}
+
+function drawVignette(t) {
+  t.globalCompositeOperation = "multiply";
+  t.drawImage(vignette, 0, 0);
+  t.globalCompositeOperation = "source-over";
 }
 
 // Moving film grain drawn over everything, ant included,
@@ -411,7 +485,7 @@ function updateAnimation(dt) {
   }
 }
 
-// Priority: DEAD > INTERACT > RUN > WALK > TURN > IDLE
+// Priority: DEAD > INTERACT > RUN > WALK > IDLE
 function updatePlayer(dt) {
   const dx = axis(["ArrowLeft", "KeyA"], ["ArrowRight", "KeyD"]);
   const dy = axis(["ArrowUp", "KeyW"], ["ArrowDown", "KeyS"]);
@@ -437,24 +511,16 @@ function updatePlayer(dt) {
     return;
   }
 
-  // ---- RUN / WALK: horizontal only. Right = mirrored left sprite.
-  if (dx !== 0) {
-    player.facing = dx;
+  // ---- RUN / WALK: any of 8 directions on the floor.
+  // Side-view sprite throughout; facing only changes on left/right.
+  // Right = mirrored left sprite.
+  if (dx !== 0 || dy !== 0) {
+    if (dx !== 0) player.facing = dx;
     const speed = running ? RUN_SPEED : WALK_SPEED;
-    player.x += dx * speed * dt / 1000;
+    const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1;  // no faster diagonals
+    player.x += dx * norm * speed * dt / 1000;
+    player.y += dy * norm * speed * dt / 1000;
     setAnim(running ? "run" : "walk");
-
-    // keep the body on screen
-    const margin = 40;
-    player.x = Math.max(margin, Math.min(W - margin, player.x));
-    return;
-  }
-
-  // ---- TURN: up/down only changes the view, no Y movement yet
-  if (dy !== 0) {
-    setAnim("turn");
-    player.frame = dy < 0 ? TURN_BACK : TURN_FRONT;
-    player.frameTime = 0;  // hold the frame while the key is down
     return;
   }
 
@@ -470,13 +536,12 @@ function drawPlayer() {
   const anim = ANIMATIONS[player.anim];
   const img = anim.images[player.frame];
 
-  // anchor position snapped to whole device pixels
-  const ax = Math.round(player.x * DPR);
-  const ay = Math.round(player.y * DPR);
+  // anchor position on screen, snapped to whole device pixels
+  const ax = Math.round(player.x * DPR) - Math.round(camera.x * DPR);
+  const ay = Math.round(player.y * DPR) - Math.round(camera.y * DPR);
   const s = SPRITE_SCALE[player.anim] * DPR;
 
-  // turn frames are a front/back view and are never mirrored
-  const flip = player.facing === 1 && player.anim !== "turn";
+  const flip = player.facing === 1;
 
   ctx.save();
   ctx.translate(ax, ay);
@@ -622,22 +687,13 @@ function buildIntro() {
   if (!introEnabled) return;
   const cw = canvas.width, ch = canvas.height;
 
-  // same seed and size as the world paper, so the reveal only
+  // the same floor the camera starts on, so the reveal only
   // brings in the ant, crumbs and hairs; the paper itself stays put
   paperLayer.width = cw;
   paperLayer.height = ch;
   const p = paperLayer.getContext("2d");
-  p.imageSmoothingEnabled = false;
-  p.drawImage(buildPaper(makeRng(WORLD_SEED), Math.ceil(W / PAPER_PIXEL), Math.ceil(H / PAPER_PIXEL)), 0, 0, cw, ch);
-  const r = Math.hypot(cw / 2, ch / 2);
-  const g = p.createRadialGradient(cw / 2, ch / 2, r * 0.35, cw / 2, ch / 2, r);
-  g.addColorStop(0, "rgba(255,255,255,0)");
-  g.addColorStop(1, "rgba(92,74,56,0.55)");
-  // multiply, exactly like the world vignette, or the dissolve shows seams
-  p.globalCompositeOperation = "multiply";
-  p.fillStyle = g;
-  p.fillRect(0, 0, cw, ch);
-  p.globalCompositeOperation = "source-over";
+  drawWorld(p, camera.x, camera.y, false);
+  drawVignette(p);
 
   layoutTitle(cw, ch);
 
@@ -753,8 +809,14 @@ function loop(time) {
 
   updateGrain(dt);
 
+  // camera keeps the ant in the middle of the screen
+  camera.x = player.x - W / 2;
+  camera.y = player.y - H / 2;
+  pruneChunks();
+
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(world, 0, 0);
+  drawWorld(ctx, camera.x, camera.y, true);
+  drawVignette(ctx);
   drawPlayer();
   if (intro.active) drawIntro();
   drawGrain();
@@ -770,7 +832,7 @@ window.addEventListener("pointerdown", () => canvas.focus());
 
 // Build stamp: lets you confirm in DevTools that the browser is not
 // running a cached older index.html
-console.info("[SUGAR] build: intro-sequence-02");
+console.info("[SUGAR] build: endless-floor-01");
 
 // title font; give up after 3s so a slow network never blocks the game
 const introFont = Promise.race([
@@ -780,14 +842,20 @@ const introFont = Promise.race([
 
 Promise.all([loadAnimations(), loadObjects(), introFont])
   .then(() => {
-    buildGrain();
-    buildWorld();
-    buildIntro();
-    window.addEventListener("resize", buildWorld);
-    window.addEventListener("resize", buildIntro);
     // initial spawn only; never reset inside the loop
-    player.x = W / 2;
-    player.y = H / 2;
+    player.x = 0;
+    player.y = 0;
+    camera.x = player.x - W / 2;
+    camera.y = player.y - H / 2;
+    buildGrain();
+    buildVignette();
+    buildIntro();
+    window.addEventListener("resize", buildVignette);
+    window.addEventListener("resize", () => {
+      camera.x = player.x - W / 2;
+      camera.y = player.y - H / 2;
+      buildIntro();
+    });
     requestAnimationFrame(loop);
   })
   .catch(err => console.error(err));
