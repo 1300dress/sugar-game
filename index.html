@@ -39,6 +39,8 @@ const SPRITE_SCALE = {
   walk: 0.477,  // 0.53 x 0.9 (director request)
   run: 0.44,
   turn: 0.44,
+  front_walk: 0.44,
+  back_walk: 0.44,
   interact: 0.40,
   dead: 0.40
 };
@@ -49,7 +51,11 @@ const ANIMATIONS = {
   run:      { count: 4, interval: 90,  anchorX: 162, anchorY: 95,  loop: true  },
   turn:     { count: 2, interval: 300, anchorX: 87,  anchorY: 105, loop: false },
   interact: { count: 3, interval: 280, anchorX: 188, anchorY: 95,  loop: false },
-  dead:     { count: 2, interval: 450, anchorX: 104, anchorY: 101, loop: false }
+  dead:     { count: 2, interval: 450, anchorX: 104, anchorY: 101, loop: false },
+  // derived from turn_01 / turn_02 by tools/make_turn_walk.py (legs only);
+  // same canvas as turn, so same anchor. runInterval is used with Shift.
+  front_walk: { count: 4, interval: 130, runInterval: 90, anchorX: 87, anchorY: 105, loop: true },
+  back_walk:  { count: 4, interval: 130, runInterval: 90, anchorX: 87, anchorY: 105, loop: true }
 };
 
 for (const [name, anim] of Object.entries(ANIMATIONS)) {
@@ -59,16 +65,13 @@ for (const [name, anim] of Object.entries(ANIMATIONS)) {
   }
 }
 
+// Animations seen from the front or back (never flipped)
+const FRONT_BACK = new Set(["turn", "front_walk", "back_walk"]);
+
 // Movement speed in world pixels per second
 // (original 70 / 170, x1.7 then x1.3, director request)
 const WALK_SPEED = 155;
 const RUN_SPEED = 375;
-
-// turn frame mapping (index into ANIMATIONS.turn.images)
-// turn_01: larger, darker eyes and shorter abdomen -> faces the viewer
-// turn_02: smaller eyes and longer abdomen -> faces away
-const TURN_FRONT = 0;   // moving down
-const TURN_BACK = 1;    // moving up
 
 // ==================================================
 // CANVAS
@@ -463,7 +466,8 @@ const player = {
   anim: "idle",
   frame: 0,
   frameTime: 0,
-  finished: false
+  finished: false,
+  running: false   // picks runInterval when an animation has one
 };
 
 function setAnim(name) {
@@ -476,10 +480,11 @@ function setAnim(name) {
 
 function updateAnimation(dt) {
   const anim = ANIMATIONS[player.anim];
+  const interval = player.running && anim.runInterval ? anim.runInterval : anim.interval;
   player.frameTime += dt;
 
-  while (player.frameTime >= anim.interval) {
-    player.frameTime -= anim.interval;
+  while (player.frameTime >= interval) {
+    player.frameTime -= interval;
     if (anim.loop) {
       player.frame = (player.frame + 1) % anim.count;
     } else if (player.frame < anim.count - 1) {
@@ -519,7 +524,7 @@ function updatePlayer(dt) {
   }
 
   // ---- RUN / WALK: any of 8 directions on the floor.
-  // Straight up/down shows the back/front view (a held turn frame);
+  // Straight up/down shows the back/front walk cycle;
   // anything with left/right uses the side view. Right = mirrored left.
   if (dx !== 0 || dy !== 0) {
     if (dx !== 0) player.facing = dx;
@@ -527,10 +532,9 @@ function updatePlayer(dt) {
     const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1;  // no faster diagonals
     player.x += dx * norm * speed * dt / 1000;
     player.y += dy * norm * speed * dt / 1000;
+    player.running = running;
     if (dx === 0) {
-      setAnim("turn");
-      player.frame = dy < 0 ? TURN_BACK : TURN_FRONT;
-      player.frameTime = 0;  // hold the frame while moving
+      setAnim(dy < 0 ? "back_walk" : "front_walk");
     } else {
       setAnim(running ? "run" : "walk");
     }
@@ -554,8 +558,8 @@ function drawPlayer() {
   const ay = Math.round(player.y * DPR) - Math.round(camera.y * DPR);
   const s = SPRITE_SCALE[player.anim] * DPR;
 
-  // turn frames are a front/back view and are never mirrored
-  const flip = player.facing === 1 && player.anim !== "turn";
+  // front/back views are symmetric and never mirrored
+  const flip = player.facing === 1 && !FRONT_BACK.has(player.anim);
 
   ctx.save();
   ctx.translate(ax, ay);
@@ -846,7 +850,7 @@ window.addEventListener("pointerdown", () => canvas.focus());
 
 // Build stamp: lets you confirm in DevTools that the browser is not
 // running a cached older index.html
-console.info("[SUGAR] build: endless-floor-01");
+console.info("[SUGAR] build: front-back-walk-01");
 
 // title font; give up after 3s so a slow network never blocks the game
 const introFont = Promise.race([

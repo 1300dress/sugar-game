@@ -496,6 +496,13 @@ Asset root:
 - turn
 - interact
 - dead
+- front_walk (derived)
+- back_walk (derived)
+
+`front_walk` / `back_walk`는 새로 그린 그림이 아니다.
+`tools/make_turn_walk.py`가 `turn_01` / `turn_02`의 다리 픽셀만
+휘어서 만든 4프레임 걷기다. 몸통·더듬이·스캔 질감은 원본 그대로다.
+위/아래로만 이동할 때 사용한다 (아래 = front, 위 = back).
 
 Objects:
 
@@ -545,6 +552,7 @@ Canvas 사용 시:
 | turn | 300ms |
 | interact | 280ms |
 | dead | 450ms |
+| front_walk / back_walk | 130ms (Shift 90ms) |
 
 `dead` animation은
 마지막 frame에서 정지한다.
@@ -568,6 +576,7 @@ BODY ANCHOR를 기준으로 렌더링한다.
 | turn | 171 × 179 | 87, 105 |
 | interact | 327 × 166 | 188, 95 |
 | dead | 256 × 153 | 104, 101 |
+| front_walk / back_walk | 171 × 179 | 87, 105 |
 
 Player coordinate가 `(px, py)`라면
 
