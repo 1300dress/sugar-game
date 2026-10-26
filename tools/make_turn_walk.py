@@ -22,8 +22,8 @@ SOURCES = {
     "back_walk":  dict(src="turn/turn_02.png", band=(58, 118), legs=(40, 166)),
 }
 
-SHIFT = 8        # px at the leg tips, in source pixels
-RAMP = 24        # px from the body band over which the bend grows
+SHIFT = 13       # px at the leg tips, in source pixels
+RAMP = 30        # px from the body band over which the bend grows
 PHASES = [1, 0, -1, 0]   # 4 frames, same count as walk/run
 
 
