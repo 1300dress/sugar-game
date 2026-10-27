@@ -1038,6 +1038,9 @@ SPEED는 world px/s (주인공 걷기 155).
   - I(retreat)는 계속 뒷걸음치다 집에서 180px 넘게 밀리면 몰려서 멈춘다.
 - 세트 안의 줄은 한 호흡씩 천천히 나온다 (줄 사이 0.9초 + 글자당 0.055초). 클릭해도 빨라지지 않는다.
 - 한 세트가 사라진 뒤 5초 동안은 말을 걸어도 대답하지 않는다.
+- 한 세트가 끝나면 그 형제는 이리저리 방향을 틀며 3~5초 동안 자리를 떠났다가
+  자기 움직임 규칙으로 돌아오며 원래 자리 쪽으로 온다 (director decision).
+  상수: `SIB_AWAY_MIN` `SIB_AWAY_MAX` `SIB_AWAY_TURN`
 - 03까지 다 들은 형제는 더 대답하지 않는다.
 - 주인공은 대답하지 않는다. 듣기만 한다.
 - 03까지 다 듣고 그 글이 사라진 뒤 2초를 더 걸으면 다음 형제가 나타난다.
@@ -1073,8 +1076,9 @@ SPEED는 world px/s (주인공 걷기 155).
 대화가 아니다. 형제는 듣지 못한다. 튜토리얼도 아니다.
 슬픈 기억과 우스운 기억을 구분하지 않고 담담하게.
 
-- 형제 몸 중심과 150px 안으로 들어가면 최초 1회만 자동으로 일어난다.
-- 주인공은 이동만 멈추고 그 형제 쪽으로 돌아선다. 바라보는 형제도 잠시 멈춘다.
+- 형제가 처음 화면 안에 들어오고 1초 뒤에 최초 1회만 자동으로 일어난다 (director decision).
+  그 순간 형제가 화면 밖으로 잠깐 나가 있으면 다시 보일 때 시작한다.
+- 주인공은 저절로 멈추고 그 형제 쪽으로 돌아선다. 바라보는 형제도 잠시 멈춘다.
 - 0.3초 → 첫 문장(이름) 1.1초 → 사라짐 → 0.5초 → 두 번째 문장(기억) 1.5초 + 글자당 0.04초 → 사라짐
 - 두 문장은 주인공 위 같은 자리에 하나씩만. 형제 대사와 같은 타자 글씨. 버튼이나 선택지 없음.
 - 끝나면 바로 다시 움직일 수 있다. 누르고 있던 키나 손가락도 그대로 이어진다.
@@ -1095,5 +1099,5 @@ SPEED는 world px/s (주인공 걷기 155).
 | I | Finn | That's Finn | He'll walk away if I get any closer |
 | J | Toby | That's Toby | He still thinks I know where we're going |
 
-조정용 상수 (`index.html` ENCOUNTER): `ENCOUNTER_RADIUS` `ENCOUNTER_PAUSE`
+조정용 상수 (`index.html` ENCOUNTER): `ENCOUNTER_DELAY` `ENCOUNTER_PAUSE`
 `ENCOUNTER_FIRST_HOLD` `ENCOUNTER_GAP` `ENCOUNTER_SECOND_HOLD` `ENCOUNTER_PER_CHAR` `ENCOUNTER_FADE`

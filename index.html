@@ -867,6 +867,10 @@ const SIB_MARGIN = 60;      // CSS px past the screen edge when placed
 const SIB_NEAR = 170;       // the hero this close is "near" (freeze, retreat)
 const SIB_TAP_PAD = 14;     // CSS px of extra room around a sibling for clicks
 const SIB_RETREAT_MAX = 180;   // how far from home I backs off before it is cornered
+// after each set it has said, a sibling wanders off for a while (§33)
+const SIB_AWAY_MIN = 3000;     // ms
+const SIB_AWAY_MAX = 5000;     // ms
+const SIB_AWAY_TURN = [500, 1200];   // ms between random turns while away
 
 // Talking needs the two ants side by side, face to face (§33):
 // the hero in side view, looking at the sibling, at the same height,
@@ -1114,7 +1118,18 @@ function updateSiblings(dt) {
     // talking, or the hero right beside it: stands still, faces the hero
     // (I keeps backing off instead, until it is cornered)
     let v = null;
-    if (encounter && encounter.sib === s) {
+    if (s.awayLeft > 0) {
+      // just finished a set: wanders off, turning at random, then comes back
+      // to its own rule (which brings it back toward where it lives)
+      s.awayLeft -= dt;
+      s.awayTurn -= dt;
+      if (s.awayTurn <= 0) {
+        s.awayHeading += (s.rng() - 0.5) * 1.8;
+        s.awayTurn = SIB_AWAY_TURN[0] + s.rng() * (SIB_AWAY_TURN[1] - SIB_AWAY_TURN[0]);
+      }
+      v = [Math.cos(s.awayHeading), Math.sin(s.awayHeading)];
+      if (s.awayLeft <= 0) s.tx = null;   // fresh target when its rule takes over
+    } else if (encounter && encounter.sib === s) {
       // being looked at: holds still for the moment, keeps its own facing
     } else if ((talk && talk.sib === s) || (s.def.rule !== "retreat" && heroBeside(s))) {
       s.facing = player.x > s.x ? 1 : -1;
@@ -1127,7 +1142,8 @@ function updateSiblings(dt) {
       const sp = sibSpeed(s) * dt / 1000;
       s.x += v[0] * sp;
       s.y += v[1] * sp;
-      if (s.def.rule === "retreat" && Math.hypot(player.x - s.x, player.y - s.y) < SIB_NEAR + 20) {
+      if (s.def.rule === "retreat" && !(s.awayLeft > 0) &&
+          Math.hypot(player.x - s.x, player.y - s.y) < SIB_NEAR + 20) {
         s.facing = player.x > s.x ? 1 : -1;   // backing away, eyes on the hero
       } else if (Math.abs(v[0]) > 0.2) {
         s.facing = v[0] > 0 ? 1 : -1;
@@ -1294,6 +1310,14 @@ function tapSibling(s) {
   return true;
 }
 
+// a sibling that has just said a set leaves the spot for a while,
+// first heading roughly away from the hero
+function sendAway(s) {
+  s.awayLeft = SIB_AWAY_MIN + s.rng() * (SIB_AWAY_MAX - SIB_AWAY_MIN);
+  s.awayHeading = Math.atan2(s.y - player.y, s.x - player.x) + (s.rng() - 0.5) * 2;
+  s.awayTurn = SIB_AWAY_TURN[0];
+}
+
 function updateTalk(dt) {
   if (!talk) {
     talkCooldown = Math.max(0, talkCooldown - dt);
@@ -1301,8 +1325,10 @@ function updateTalk(dt) {
   }
   talk.clock += dt;
   if (talk.clock >= talk.end + TALK_FADE) {
+    const done = talk.sib;
     talk = null;
     talkCooldown = TALK_COOLDOWN;
+    sendAway(done);
   }
 }
 
@@ -1484,13 +1510,14 @@ function drawTalk() {
 
 // ==================================================
 // ENCOUNTER (GAME_BIBLE §34)
-// The first time the hero comes near a sibling it stops, turns to it
-// and thinks two sentences: the name, then one memory. Not a talk:
+// One second after a sibling first comes into frame the hero stops
+// by itself, turns to it and thinks two sentences: the name, then one
+// memory. Not a talk:
 // the sibling does not hear it. Once per sibling, one at a time.
 // Lines: data/siblings_encounter.json
 // ==================================================
 
-const ENCOUNTER_RADIUS = 150;       // CSS px between the two body anchors
+const ENCOUNTER_DELAY = 1000;       // ms after a sibling first comes into frame
 const ENCOUNTER_PAUSE = 300;        // ms of stillness before the first sentence
 const ENCOUNTER_FIRST_HOLD = 1100;  // ms the first sentence (the name) stays
 const ENCOUNTER_GAP = 500;          // ms of nothing between the two sentences
@@ -1522,13 +1549,15 @@ function updateEncounter(dt) {
     return;
   }
   // a new one: only between other moments, never over a sibling's talk
+  // time since each sibling first came into frame
+  for (const s of siblings) if (s.seen && !s.encountered) s.seenFor = (s.seenFor || 0) + dt;
   if (!encounterLines || talk || player.anim === "dead") return;
   for (const s of siblings) {
-    if (!s.seen || s.encountered || !sibOnScreen(s)) continue;
-    if (Math.hypot(s.x - player.x, s.y - player.y) <= ENCOUNTER_RADIUS) {
-      startEncounter(s);
-      return;
-    }
+    if (!s.seen || s.encountered || s.seenFor < ENCOUNTER_DELAY) continue;
+    // if it has slipped out of frame by then, wait until it is back in view
+    if (!sibOnScreen(s)) continue;
+    startEncounter(s);
+    return;
   }
 }
 
@@ -2042,7 +2071,7 @@ window.addEventListener("pointerdown", () => canvas.focus());
 
 // Build stamp: lets you confirm in DevTools that the browser is not
 // running a cached older index.html
-console.info("[SUGAR] build: siblings-03");
+console.info("[SUGAR] build: siblings-04");
 
 // title font; give up after 3s so a slow network never blocks the game
 const introFont = Promise.race([
