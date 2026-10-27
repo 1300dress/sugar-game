@@ -1062,3 +1062,38 @@ SPEED는 world px/s (주인공 걷기 155).
 
 주소 끝에 `#ink` `#label` `#slip` `#outline`을 붙여 바꿔 볼 수 있다.
 글은 형제 위에 놓고 자리가 없거나 주인공을 가리면 아래로 옮긴다.
+
+---
+
+# 34. ENCOUNTER — THE HERO'S THOUGHT
+
+**STATUS: CONFIRMED (director decision)**
+
+형제를 처음 만나는 순간 주인공이 잠깐 멈춰 그 형제를 보며 떠올리는 두 문장.
+대화가 아니다. 형제는 듣지 못한다. 튜토리얼도 아니다.
+슬픈 기억과 우스운 기억을 구분하지 않고 담담하게.
+
+- 형제 몸 중심과 150px 안으로 들어가면 최초 1회만 자동으로 일어난다.
+- 주인공은 이동만 멈추고 그 형제 쪽으로 돌아선다. 바라보는 형제도 잠시 멈춘다.
+- 0.3초 → 첫 문장(이름) 1.1초 → 사라짐 → 0.5초 → 두 번째 문장(기억) 1.5초 + 글자당 0.04초 → 사라짐
+- 두 문장은 주인공 위 같은 자리에 하나씩만. 형제 대사와 같은 타자 글씨. 버튼이나 선택지 없음.
+- 끝나면 바로 다시 움직일 수 있다. 누르고 있던 키나 손가락도 그대로 이어진다.
+- 동시에 둘 이상 일어나지 않고 형제의 대화(§33) 중에는 시작되지 않는다.
+- 독백 중에는 형제를 클릭해도 대화가 시작되지 않는다. 독백이 끝난 뒤 마주보고 말을 건다.
+- 대사 원문: `data/siblings_encounter.json` (최종 채택본. 단어와 문장 구조를 바꾸지 않는다. 문장부호는 물음표만.)
+
+| | 이름 | 첫 문장 | 두 번째 문장 |
+|---|---|---|---|
+| A | Jack | There's Jack | Still guarding the same stupid rock |
+| B | Jules | There's Jules | He stole my breakfast yesterday |
+| C | Timmy | That's Timmy | He tried to jump off the wall again |
+| D | Dex | There's Dex | He punched Jack last Tuesday |
+| E | Ollie | There's Ollie | He spent all morning watching a dead beetle |
+| F | Alfie | That's Alfie | He thinks everyone hates him |
+| G | Max | There's Max | He challenged a bird to a race once |
+| H | Milo | That's Milo | He still leaves food out for our dead brother |
+| I | Finn | That's Finn | He'll walk away if I get any closer |
+| J | Toby | That's Toby | He still thinks I know where we're going |
+
+조정용 상수 (`index.html` ENCOUNTER): `ENCOUNTER_RADIUS` `ENCOUNTER_PAUSE`
+`ENCOUNTER_FIRST_HOLD` `ENCOUNTER_GAP` `ENCOUNTER_SECOND_HOLD` `ENCOUNTER_PER_CHAR` `ENCOUNTER_FADE`

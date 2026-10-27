@@ -1,0 +1,76 @@
+{
+  "source": "SUGAR — Ten Siblings Encounter Event (final lines, do not reword)",
+  "note": "The hero's own two-sentence thought on first meeting each sibling. Shown one sentence at a time. Only ? is allowed as punctuation.",
+  "siblings": {
+    "A": {
+      "name": "Jack",
+      "lines": [
+        "There's Jack",
+        "Still guarding the same stupid rock"
+      ]
+    },
+    "B": {
+      "name": "Jules",
+      "lines": [
+        "There's Jules",
+        "He stole my breakfast yesterday"
+      ]
+    },
+    "C": {
+      "name": "Timmy",
+      "lines": [
+        "That's Timmy",
+        "He tried to jump off the wall again"
+      ]
+    },
+    "D": {
+      "name": "Dex",
+      "lines": [
+        "There's Dex",
+        "He punched Jack last Tuesday"
+      ]
+    },
+    "E": {
+      "name": "Ollie",
+      "lines": [
+        "There's Ollie",
+        "He spent all morning watching a dead beetle"
+      ]
+    },
+    "F": {
+      "name": "Alfie",
+      "lines": [
+        "That's Alfie",
+        "He thinks everyone hates him"
+      ]
+    },
+    "G": {
+      "name": "Max",
+      "lines": [
+        "There's Max",
+        "He challenged a bird to a race once"
+      ]
+    },
+    "H": {
+      "name": "Milo",
+      "lines": [
+        "That's Milo",
+        "He still leaves food out for our dead brother"
+      ]
+    },
+    "I": {
+      "name": "Finn",
+      "lines": [
+        "That's Finn",
+        "He'll walk away if I get any closer"
+      ]
+    },
+    "J": {
+      "name": "Toby",
+      "lines": [
+        "That's Toby",
+        "He still thinks I know where we're going"
+      ]
+    }
+  }
+}

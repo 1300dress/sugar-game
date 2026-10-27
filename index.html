@@ -632,6 +632,14 @@ function updatePlayer(dt) {
   player.dirX = 0;
   player.dirY = 0;
 
+  // ---- ENCOUNTER: stands still and looks at the sibling (§34)
+  if (encounter && player.anim !== "dead") {
+    player.running = false;
+    if (encounter.sib.x !== player.x) player.facing = Math.sign(encounter.sib.x - player.x);
+    setAnim("idle");
+    return;
+  }
+
   // ---- DEAD: final state, ignores all input until page refresh
   if (player.anim === "dead") return;
 
@@ -879,9 +887,10 @@ const siblings = [];        // placed so far, in meeting order
 let sibWalked = 0;          // ms walked since the next sibling became due
 
 async function loadSiblings() {
-  const [data, talkData] = await Promise.all([
+  const [data, talkData, encounterData] = await Promise.all([
     fetch("sprites/siblings/siblings.json").then(r => r.json()),
-    fetch("data/siblings_dialogue.json").then(r => r.json())
+    fetch("data/siblings_dialogue.json").then(r => r.json()),
+    fetch("data/siblings_encounter.json").then(r => r.json())
   ]);
   for (const a of data.ants) {
     a.images = await Promise.all([1, 2, 3, 4].map(n =>
@@ -890,6 +899,7 @@ async function loadSiblings() {
   }
   sibData = data;
   sibLines = talkData.siblings;
+  encounterLines = encounterData.siblings;
 }
 
 function sibSpeed(s) {
@@ -1104,7 +1114,9 @@ function updateSiblings(dt) {
     // talking, or the hero right beside it: stands still, faces the hero
     // (I keeps backing off instead, until it is cornered)
     let v = null;
-    if ((talk && talk.sib === s) || (s.def.rule !== "retreat" && heroBeside(s))) {
+    if (encounter && encounter.sib === s) {
+      // being looked at: holds still for the moment, keeps its own facing
+    } else if ((talk && talk.sib === s) || (s.def.rule !== "retreat" && heroBeside(s))) {
       s.facing = player.x > s.x ? 1 : -1;
     } else {
       v = RULE_STEER[s.def.rule](s, dt);
@@ -1261,6 +1273,7 @@ function startTalk(s) {
 
 // returns true if the click was used by a sibling (the hero does not walk)
 function tapSibling(s) {
+  if (encounter) return true;           // the hero is thinking: clicks wait
   if (talk) return talk.sib === s;      // listening already: lines cannot be hurried
   if (s.heard >= 3) return false;       // has said all it will say
   if (!faceToFace(s)) {
@@ -1466,6 +1479,89 @@ function drawTalk() {
   ctx.imageSmoothingEnabled = false;
   ctx.globalAlpha = talkAlpha();
   TALK_DRAW[TALK_STYLE]();
+  ctx.restore();
+}
+
+// ==================================================
+// ENCOUNTER (GAME_BIBLE §34)
+// The first time the hero comes near a sibling it stops, turns to it
+// and thinks two sentences: the name, then one memory. Not a talk:
+// the sibling does not hear it. Once per sibling, one at a time.
+// Lines: data/siblings_encounter.json
+// ==================================================
+
+const ENCOUNTER_RADIUS = 150;       // CSS px between the two body anchors
+const ENCOUNTER_PAUSE = 300;        // ms of stillness before the first sentence
+const ENCOUNTER_FIRST_HOLD = 1100;  // ms the first sentence (the name) stays
+const ENCOUNTER_GAP = 500;          // ms of nothing between the two sentences
+const ENCOUNTER_SECOND_HOLD = 1500; // ms the second sentence stays, plus...
+const ENCOUNTER_PER_CHAR = 40;      // ...this much per character, to read it
+const ENCOUNTER_FADE = 250;         // ms each sentence takes to go (no slide, no zoom)
+
+let encounterLines = null;   // by letter: { name, lines: [first, second] }
+let encounter = null;        // { sib, clock, lines: [canvas, canvas], t: [...] }
+
+function startEncounter(s) {
+  const e = encounterLines[s.def.letter];
+  const first = talkLine(e.lines[0], s.def.letter.charCodeAt(0) * 7 + 1);
+  const second = talkLine(e.lines[1], s.def.letter.charCodeAt(0) * 7 + 2);
+  // timeline (ms): first in, first out, second in, second out
+  const firstIn = ENCOUNTER_PAUSE;
+  const firstOut = firstIn + ENCOUNTER_FIRST_HOLD;
+  const secondIn = firstOut + ENCOUNTER_FADE + ENCOUNTER_GAP;
+  const secondOut = secondIn + ENCOUNTER_SECOND_HOLD + ENCOUNTER_PER_CHAR * e.lines[1].length;
+  encounter = { sib: s, clock: 0, lines: [first, second],
+                t: [firstIn, firstOut, secondIn, secondOut, secondOut + ENCOUNTER_FADE] };
+  s.encountered = true;
+}
+
+function updateEncounter(dt) {
+  if (encounter) {
+    encounter.clock += dt;
+    if (encounter.clock >= encounter.t[4]) encounter = null;   // hands back control
+    return;
+  }
+  // a new one: only between other moments, never over a sibling's talk
+  if (!encounterLines || talk || player.anim === "dead") return;
+  for (const s of siblings) {
+    if (!s.seen || s.encountered || !sibOnScreen(s)) continue;
+    if (Math.hypot(s.x - player.x, s.y - player.y) <= ENCOUNTER_RADIUS) {
+      startEncounter(s);
+      return;
+    }
+  }
+}
+
+// which sentence shows now, and how strongly (0..1)
+function encounterShowing() {
+  const [a, b, c, d] = encounter.t;
+  const k = encounter.clock;
+  if (k >= a && k < b + ENCOUNTER_FADE) return [0, k < b ? 1 : 1 - (k - b) / ENCOUNTER_FADE];
+  if (k >= c) return [1, k < d ? 1 : Math.max(0, 1 - (k - d) / ENCOUNTER_FADE)];
+  return null;
+}
+
+function drawEncounter() {
+  if (!encounter) return;
+  const show = encounterShowing();
+  if (!show) return;
+  const [i, alpha] = show;
+  // both sentences in the same place: above the hero (below if no room),
+  // placed for the wider of the two so the second does not jump
+  const w = Math.max(encounter.lines[0].width, encounter.lines[1].width);
+  const h = encounter.lines[0].height;
+  const a = antBodyBox();
+  let top = a.t - camera.y;
+  if (candy.state === "carried") top = Math.min(top, candy.y - candyHalfSize()[1] - camera.y);
+  const cx = (a.l + a.r) / 2 - camera.x;
+  let x = Math.max(12, Math.min(W - w - 12, cx - w / 2));
+  let y = top - 22 - h;
+  if (y < 12) y = a.b - camera.y + 22;
+  const c = encounter.lines[i];
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(c, px(x), px(y), c.width * DPR, c.height * DPR);
   ctx.restore();
 }
 
@@ -1919,6 +2015,7 @@ function loop(time) {
     updateCandy(dt);
     updateSiblings(dt);
     updateTalk(dt);
+    updateEncounter(dt);
   }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1930,6 +2027,7 @@ function loop(time) {
   drawPlayer();
   drawCandy("front");
   drawTalk();
+  drawEncounter();
   if (intro.active) drawIntro();
   drawGrain();
 
@@ -1944,7 +2042,7 @@ window.addEventListener("pointerdown", () => canvas.focus());
 
 // Build stamp: lets you confirm in DevTools that the browser is not
 // running a cached older index.html
-console.info("[SUGAR] build: siblings-02");
+console.info("[SUGAR] build: siblings-03");
 
 // title font; give up after 3s so a slow network never blocks the game
 const introFont = Promise.race([
@@ -1981,6 +2079,7 @@ window.__ant = player;
 window.__candy = candy;
 window.__siblings = siblings;
 window.__talk = () => talk;
+window.__encounter = () => encounter;
 </script>
 
 </body>
