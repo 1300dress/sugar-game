@@ -1024,7 +1024,7 @@ SPEED는 world px/s (주인공 걷기 155).
 
 # 33. MEETING THE SIBLINGS — TALK
 
-**STATUS: CONFIRMED (director decision), look under review**
+**STATUS: CONFIRMED (director decision)**
 
 - 별사탕을 등에 진 뒤 도합 3초를 걸으면 A가 나타난다.
   별사탕처럼 진행 방향 화면 바로 바깥에 놓이고 화면에 들어오면 그 자리가 집이 된다.
@@ -1038,7 +1038,11 @@ SPEED는 world px/s (주인공 걷기 155).
 - I의 03도 다른 형제와 같은 규칙을 따른다 (ChatGPT 제안인 "떠날 때만"은 보류).
 - 대사 원문: `data/siblings_dialogue.json` (ChatGPT Dialogue Study 02 그대로)
 
-## 대사 표시 — 시안 4종
+## 대사 표시
+
+**확정: 1 ink (말풍선 없음)** (director decision). 나머지 셋은 다시 볼 때를 위해 코드에 남겨 둔다.
+
+시안 4종:
 
 `sprites/preview/talk_styles.png`
 
