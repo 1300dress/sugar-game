@@ -1106,7 +1106,7 @@ SPEED는 world px/s (주인공 걷기 155).
 
 # 35. FAVICON / LINK PREVIEW
 
-- 파비콘: 마스터 개미 옆모습(`idle_01`) 전체를 종이색 바탕에 꽉 차게 (director decision).
+- 파비콘: 별사탕(`objects/star_candy.png`)을 종이색 바탕에 꽉 차게 (director decision).
   `icons/favicon.ico` (16·32·48) · `icons/favicon-32.png` · `icons/apple-touch-icon.png` (180) · `icons/icon-512.png`
 - 링크 미리보기 (카카오톡 등): `icons/og-image.jpg` 1200×630.
   타이포만 화면 가득 (director decision). 인트로 타이틀 장면을 그대로 찍었다.
