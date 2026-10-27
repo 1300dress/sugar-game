@@ -1084,7 +1084,7 @@ SPEED는 world px/s (주인공 걷기 155).
 
 | | 이름 | 첫 문장 | 두 번째 문장 |
 |---|---|---|---|
-| A | Jack | There's Jack | Still guarding the same stupid rock |
+| A | Jack | That's Jack | Our big brother |
 | B | Jules | There's Jules | He stole my breakfast yesterday |
 | C | Timmy | That's Timmy | He tried to jump off the wall again |
 | D | Dex | There's Dex | He punched Jack last Tuesday |
