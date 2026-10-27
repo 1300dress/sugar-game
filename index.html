@@ -858,6 +858,18 @@ function drawPlayer() {
 const SIB_MARGIN = 60;      // CSS px past the screen edge when placed
 const SIB_NEAR = 170;       // the hero this close is "near" (freeze, retreat)
 const SIB_TAP_PAD = 14;     // CSS px of extra room around a sibling for clicks
+const SIB_RETREAT_MAX = 180;   // how far from home I backs off before it is cornered
+
+// Talking needs the two ants side by side, face to face (§33):
+// the hero in side view, looking at the sibling, at the same height,
+// with only a small gap between the two bodies.
+const FACE_GAP_MIN = -12;   // CSS px: bodies may touch a little
+const FACE_GAP_MAX = 34;    // ...or stand this far apart
+const FACE_DY = 24;         // CSS px of height difference allowed
+// a sibling stops and turns to the hero when the hero comes this close
+// beside it, so a moving sibling can be met
+const WAIT_GAP = 70;
+const WAIT_DY = 45;
 const SIB_DELAY_FIRST = 3000;  // ms of walking with the candy before A appears
 const SIB_DELAY_NEXT = 2000;   // ms of walking after a sibling's last set before the next
 
@@ -933,6 +945,24 @@ function spawnSibling(dx, dy) {
   placeSiblingAhead(s, dx, dy);
   siblings.push(s);
   return s;
+}
+
+// gap between the two bodies along x (negative = overlapping)
+function sideGap(s) {
+  const a = antBodyBox(), b = sibBox(s);
+  return s.x >= player.x ? b.l - a.r : a.l - b.r;
+}
+
+function heroBeside(s) {
+  const g = sideGap(s);
+  return g >= -40 && g <= WAIT_GAP && Math.abs(s.y - player.y) <= WAIT_DY;
+}
+
+function faceToFace(s) {
+  if (FRONT_BACK.has(player.anim) || player.anim === "dead") return false;
+  if (player.facing !== Math.sign(s.x - player.x)) return false;
+  const g = sideGap(s);
+  return g >= FACE_GAP_MIN && g <= FACE_GAP_MAX && Math.abs(s.y - player.y) <= FACE_DY;
 }
 
 function sibDone(s) {
@@ -1022,6 +1052,9 @@ const RULE_STEER = {
     const d = Math.hypot(vx, vy);
     if (d < SIB_NEAR) {
       s.tx = null;
+      // cornered: past this far from home it stops backing off
+      const nx = s.x + vx / d * 4, ny = s.y + vy / d * 4;
+      if (Math.hypot(nx - s.homeX, ny - s.homeY) > SIB_RETREAT_MAX) return null;
       return [vx / d, vy / d];
     }
     return wander(s, dt, 200, 600, 2000);
@@ -1068,12 +1101,14 @@ function updateSiblings(dt) {
       continue;   // waits where it is until found
     }
 
-    // talking: stands still and faces the hero
+    // talking, or the hero right beside it: stands still, faces the hero
+    // (I keeps backing off instead, until it is cornered)
     let v = null;
-    if (talk && talk.sib === s) {
+    if ((talk && talk.sib === s) || (s.def.rule !== "retreat" && heroBeside(s))) {
       s.facing = player.x > s.x ? 1 : -1;
     } else {
       v = RULE_STEER[s.def.rule](s, dt);
+      if (!v && heroBeside(s)) s.facing = player.x > s.x ? 1 : -1;   // cornered I
     }
 
     if (v) {
@@ -1131,10 +1166,11 @@ function siblingAt(cx, cy) {
 
 // ==================================================
 // TALK (GAME_BIBLE §33)
-// A click/tap on a sibling plays its next set. Lines come one by one,
-// one breath each. The hero never answers.
-// A click while lines are still coming shows the rest at once;
-// a click after that moves on to the next set.
+// A click/tap on a sibling plays its next set, but only when the two
+// stand side by side, face to face. Lines come one by one, one breath
+// each, and cannot be hurried. The hero never answers.
+// After a set has faded there is a 5 s pause before the next one.
+// After the third set the sibling has nothing more to say.
 //
 // Four looks, for review. Pick with #ink #label #slip #outline
 // (or ?talk=...). Default: ink.
@@ -1153,13 +1189,15 @@ const TALK_STYLE = (() => {
 
 const TALK_FONT = 22;           // VT323 size, 1 text px = 1 CSS px
 const TALK_LINE_GAP = 3;        // CSS px between lines
-const TALK_FIRST = 250;         // ms before the first line
-const TALK_BREATH = 520;        // ms between lines, plus...
-const TALK_PER_CHAR = 34;       // ...this much per character of the line before
-const TALK_HOLD = 2600;         // ms the whole set stays after its last line
-const TALK_FADE = 700;          // ms to fade out
+const TALK_FIRST = 450;         // ms before the first line
+const TALK_BREATH = 900;        // ms between lines, plus...
+const TALK_PER_CHAR = 55;       // ...this much per character of the line before
+const TALK_HOLD = 3400;         // ms the whole set stays after its last line
+const TALK_FADE = 900;          // ms to fade out
+const TALK_COOLDOWN = 5000;     // ms after a set fades before any sibling talks again
 
-let talk = null;   // { sib, set, lines, at[], clock, shownAll, end }
+let talk = null;   // { sib, set, lines, at[], clock, end }
+let talkCooldown = 0;
 
 // one line of worn typewriter ink at a fixed height so lines share a baseline
 function talkLine(str, seed, color = INK) {
@@ -1216,35 +1254,43 @@ function startTalk(s) {
     tag: talkLine(letter, letter.charCodeAt(0), CREDIT_INK),
     at,
     clock: 0,
-    end: at[at.length - 1] + TALK_HOLD + 40 * lines[lines.length - 1].length
+    end: at[at.length - 1] + TALK_HOLD + 60 * lines[lines.length - 1].length
   };
   s.heard++;
 }
 
-// returns true if the click was used by a sibling
+// returns true if the click was used by a sibling (the hero does not walk)
 function tapSibling(s) {
-  if (talk && talk.sib === s) {
-    const lastAt = talk.at[talk.at.length - 1];
-    if (talk.clock < lastAt) {
-      // still coming: show the rest now
-      const skip = lastAt - talk.clock;
-      talk.clock = lastAt;
-      talk.end = Math.max(talk.end - skip, lastAt + TALK_HOLD);
+  if (talk) return talk.sib === s;      // listening already: lines cannot be hurried
+  if (s.heard >= 3) return false;       // has said all it will say
+  if (!faceToFace(s)) {
+    // right beside it but looking away: the click turns the hero to it
+    if (heroBeside(s) && player.facing !== Math.sign(s.x - player.x) &&
+        !FRONT_BACK.has(player.anim) && player.anim !== "dead") {
+      player.facing = Math.sign(s.x - player.x);
+      // the sprite is not symmetric: turning in place pushes the head into
+      // the sibling, so the hero shuffles back to stand face to face
+      const g = sideGap(s);
+      if (g < 4) player.x -= player.facing * (4 - g);
       return true;
     }
-    if (s.heard < 3) { startTalk(s); return true; }
-    return false;
+    return false;                       // not side by side: the click just walks
   }
-  if (talk) return false;               // someone else is still talking
-  if (s.heard >= 3) return false;       // has said all it will say
+  if (talkCooldown > 0) return true;    // right there, but it is a moment too soon
   startTalk(s);
   return true;
 }
 
 function updateTalk(dt) {
-  if (!talk) return;
+  if (!talk) {
+    talkCooldown = Math.max(0, talkCooldown - dt);
+    return;
+  }
   talk.clock += dt;
-  if (talk.clock >= talk.end + TALK_FADE) talk = null;
+  if (talk.clock >= talk.end + TALK_FADE) {
+    talk = null;
+    talkCooldown = TALK_COOLDOWN;
+  }
 }
 
 // ---- drawing
@@ -1898,7 +1944,7 @@ window.addEventListener("pointerdown", () => canvas.focus());
 
 // Build stamp: lets you confirm in DevTools that the browser is not
 // running a cached older index.html
-console.info("[SUGAR] build: siblings-01");
+console.info("[SUGAR] build: siblings-02");
 
 // title font; give up after 3s so a slow network never blocks the game
 const introFont = Promise.race([
