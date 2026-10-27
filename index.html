@@ -125,9 +125,30 @@ function loadImage(src) {
   });
 }
 
+// opaque bounds of a sprite in its own pixels, for touching things
+function opaqueBox(img) {
+  const c = document.createElement("canvas");
+  c.width = img.width;
+  c.height = img.height;
+  const x = c.getContext("2d");
+  x.drawImage(img, 0, 0);
+  const d = x.getImageData(0, 0, c.width, c.height).data;
+  let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+  for (let y = 0; y < c.height; y++) {
+    for (let px = 0; px < c.width; px++) {
+      if (d[(y * c.width + px) * 4 + 3] > 100) {
+        x0 = Math.min(x0, px); x1 = Math.max(x1, px);
+        y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      }
+    }
+  }
+  return { x0, y0, x1, y1 };
+}
+
 async function loadAnimations() {
   for (const anim of Object.values(ANIMATIONS)) {
     anim.images = await Promise.all(anim.frames.map(loadImage));
+    anim.boxes = anim.images.map(opaqueBox);
   }
 }
 
@@ -665,12 +686,59 @@ const CANDY_DELAY = 3000;   // ms of total movement before it exists
 const CANDY_SCALE = 0.5;    // about the size of the ant's abdomen
 const CANDY_MARGIN = 40;    // CSS px past the screen edge when placed
 
+// Carried on the ant's back once the ant's body touches it.
+// Offset of the candy centre from the BODY anchor, in CSS px, for the
+// left-facing sprite (mirrored when facing right). From the front the
+// candy sits behind the ant and peeks over its head.
+const CARRY = {
+  idle:       { dx: 27, dy: -17 },
+  walk:       { dx: 27, dy: -17 },
+  run:        { dx: 27, dy: -17 },
+  interact:   { dx: 27, dy: -17 },
+  front_walk: { dx: 0,  dy: -26, behind: true },
+  turn:       { dx: 0,  dy: -26, behind: true },
+  back_walk:  { dx: 0,  dy: -2 }
+};
+
 const candy = {
-  state: "waiting",   // waiting -> hidden (placed, unseen) -> found
+  state: "waiting",   // waiting -> hidden (placed, unseen) -> found -> carried
   moved: 0,
   x: 0,
   y: 0
 };
+
+// the ant's body on the floor (world px): its sprite bounds, minus the
+// antennae above and the leg tips below and at the ends
+function antBodyBox() {
+  const anim = ANIMATIONS[player.anim];
+  const b = anim.boxes[player.frame];
+  const s = SPRITE_SCALE[player.anim];
+  const w = b.x1 - b.x0, h = b.y1 - b.y0;
+  let l = (b.x0 + w * 0.12 - anim.anchorX) * s;
+  let r = (b.x1 - w * 0.12 - anim.anchorX) * s;
+  if (player.facing === 1 && !FRONT_BACK.has(player.anim)) [l, r] = [-r, -l];
+  return {
+    l: player.x + l,
+    r: player.x + r,
+    t: player.y + (b.y0 + h * 0.3 - anim.anchorY) * s,
+    b: player.y + (b.y1 - h * 0.2 - anim.anchorY) * s
+  };
+}
+
+function antTouchesCandy() {
+  const [hw, hh] = candyHalfSize();
+  const a = antBodyBox();
+  // the candy's bumpy edge is mostly see-through, so use its middle
+  return candy.x + hw * 0.8 > a.l && candy.x - hw * 0.8 < a.r &&
+         candy.y + hh * 0.8 > a.t && candy.y - hh * 0.8 < a.b;
+}
+
+// where the carried candy sits right now (world px)
+function carriedPosition() {
+  const c = CARRY[player.anim];
+  const flip = player.facing === 1 && !FRONT_BACK.has(player.anim);
+  return [player.x + (flip ? -c.dx : c.dx), player.y + c.dy];
+}
 
 function candyHalfSize() {
   return [starCandyImage.width * CANDY_SCALE / 2, starCandyImage.height * CANDY_SCALE / 2];
@@ -696,7 +764,24 @@ function candyOnScreen() {
 
 function updateCandy(dt) {
   const dx = player.dirX, dy = player.dirY;
-  if (candy.state === "found" || (dx === 0 && dy === 0)) return;
+
+  if (candy.state === "carried") {
+    if (player.anim === "dead") {
+      // it slides off where it was and stays on the floor
+      candy.state = "found";
+      return;
+    }
+    [candy.x, candy.y] = carriedPosition();
+    return;
+  }
+  if (candy.state === "found") {
+    if (player.anim !== "dead" && antTouchesCandy()) {
+      candy.state = "carried";
+      [candy.x, candy.y] = carriedPosition();
+    }
+    return;
+  }
+  if (dx === 0 && dy === 0) return;
 
   if (candy.state === "waiting") {
     candy.moved += dt;
@@ -717,8 +802,12 @@ function updateCandy(dt) {
   if (cos < 0.5) placeCandyAhead(dx, dy);
 }
 
-function drawCandy() {
+// layer: "floor" (lying on the paper), "behind" or "front" (of the ant)
+function drawCandy(layer) {
   if (candy.state === "waiting") return;
+  const want = candy.state !== "carried" ? "floor"
+    : CARRY[player.anim].behind ? "behind" : "front";
+  if (want !== layer) return;
   const s = CANDY_SCALE * DPR;
   const x = Math.round(candy.x * DPR) - Math.round(camera.x * DPR);
   const y = Math.round(candy.y * DPR) - Math.round(camera.y * DPR);
@@ -1203,9 +1292,11 @@ function loop(time) {
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawWorld(ctx, camera.x, camera.y, true);
-  drawCandy();
+  drawCandy("floor");
   drawVignette(ctx);
+  drawCandy("behind");
   drawPlayer();
+  drawCandy("front");
   if (intro.active) drawIntro();
   drawGrain();
 
