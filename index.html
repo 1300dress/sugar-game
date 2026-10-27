@@ -486,6 +486,8 @@ const TAP_MAX_MOVE = 12;        // ...if the finger moved less than this (CSS px
 const TAP_ANT_RADIUS = 48;      // tap this close to the ant to interact
 
 const IS_TOUCH = window.matchMedia("(pointer: coarse)").matches;
+// phones: the ant moves at half speed, walk and run (director request)
+const TOUCH_SPEED_SCALE = 0.5;
 
 const touch = {
   id: null,        // the one pointer that steers; other fingers are ignored
@@ -633,7 +635,7 @@ function updatePlayer(dt) {
   if (dx !== 0 || dy !== 0) {
     const side = Math.abs(dx) > 0.38;
     if (side) player.facing = Math.sign(dx);
-    const speed = running ? RUN_SPEED : WALK_SPEED;
+    const speed = (running ? RUN_SPEED : WALK_SPEED) * (IS_TOUCH ? TOUCH_SPEED_SCALE : 1);
     player.x += dx * speed * dt / 1000;
     player.y += dy * speed * dt / 1000;
     player.running = running;
