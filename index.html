@@ -528,6 +528,9 @@ canvas.addEventListener("pointerdown", e => {
   if (intro.active || touch.id !== null) return;
   if (e.pointerType === "mouse" && e.button !== 0) return;
   e.preventDefault();
+  // a click/tap on a sibling is for listening, not walking
+  const s = siblingAt(e.clientX, e.clientY);
+  if (s && tapSibling(s)) return;
   touch.id = e.pointerId;
   touch.x = touch.startX = e.clientX;
   touch.y = touch.startY = e.clientY;
@@ -839,6 +842,584 @@ function drawPlayer() {
   ctx.scale(flip ? -s : s, s);
   // BODY anchor sits exactly on (player.x, player.y)
   ctx.drawImage(img, -anim.anchorX, -anim.anchorY);
+  ctx.restore();
+}
+
+// ==================================================
+// SIBLINGS (GAME_BIBLE §11, §32, §33)
+// Ten siblings, A to J, met one at a time once the ant carries the
+// star candy. Each appears just past the screen edge the ant is
+// heading for (like the candy). The next one appears only after all
+// three of the current one's sets have been heard.
+// Numbers and sprites: sprites/siblings/ (tools/make_siblings.py)
+// Lines: data/siblings_dialogue.json
+// ==================================================
+
+const SIB_MARGIN = 60;      // CSS px past the screen edge when placed
+const SIB_NEAR = 170;       // the hero this close is "near" (freeze, retreat)
+const SIB_TAP_PAD = 14;     // CSS px of extra room around a sibling for clicks
+const SIB_DELAY_FIRST = 3000;  // ms of walking with the candy before A appears
+const SIB_DELAY_NEXT = 2000;   // ms of walking after a sibling's last set before the next
+
+let sibData = null;         // siblings.json, with images added
+let sibLines = null;        // dialogue, by letter
+const siblings = [];        // placed so far, in meeting order
+let sibWalked = 0;          // ms walked since the next sibling became due
+
+async function loadSiblings() {
+  const [data, talkData] = await Promise.all([
+    fetch("sprites/siblings/siblings.json").then(r => r.json()),
+    fetch("data/siblings_dialogue.json").then(r => r.json())
+  ]);
+  for (const a of data.ants) {
+    a.images = await Promise.all([1, 2, 3, 4].map(n =>
+      loadImage(`sprites/siblings/${a.letter}/walk_0${n}.png`)));
+    a.boxes = a.images.map(opaqueBox);
+  }
+  sibData = data;
+  sibLines = talkData.siblings;
+}
+
+function sibSpeed(s) {
+  return s.def.speed * (IS_TOUCH ? TOUCH_SPEED_SCALE : 1);
+}
+
+function sibImage(s) {
+  return s.def.images[s.def.sequence[s.step] - 1];
+}
+
+// body box of a sibling in world px (sprite bounds, a little trimmed)
+function sibBox(s) {
+  const b = s.def.boxes[s.def.sequence[s.step] - 1];
+  const k = s.def.scale;
+  const ax = sibData.anchor.x, ay = sibData.anchor.y;
+  let l = (b.x0 - ax) * k, r = (b.x1 - ax) * k;
+  if (s.facing === 1) [l, r] = [-r, -l];
+  return { l: s.x + l, r: s.x + r, t: s.y + (b.y0 - ay) * k, b: s.y + (b.y1 - ay) * k };
+}
+
+function sibOnScreen(s) {
+  const b = sibBox(s);
+  return b.r > camera.x && b.l < camera.x + W && b.b > camera.y && b.t < camera.y + H;
+}
+
+// just past the screen edge in the direction (dx, dy), as for the candy
+function placeSiblingAhead(s, dx, dy) {
+  const len = Math.hypot(dx, dy);
+  const nx = dx / len, ny = dy / len;
+  const b = sibBox(s);
+  const hw = (b.r - b.l) / 2, hh = (b.b - b.t) / 2;
+  const dist = Math.min(
+    nx ? (W / 2 + hw) / Math.abs(nx) : Infinity,
+    ny ? (H / 2 + hh) / Math.abs(ny) : Infinity) + SIB_MARGIN;
+  s.x = s.homeX = player.x + nx * dist;
+  s.y = s.homeY = player.y + ny * dist;
+}
+
+function spawnSibling(dx, dy) {
+  const def = sibData.ants[siblings.length];
+  const s = {
+    def,
+    x: 0, y: 0, homeX: 0, homeY: 0,
+    seen: false,
+    facing: -1,
+    step: 0, stepTime: 0,
+    heard: 0,            // sets started (0..3)
+    rng: makeRng(WORLD_SEED + def.letter.charCodeAt(0)),
+    // movement memory, used differently by each rule
+    t: 0, dir: 1, pause: 0, go: 0, tx: null, ty: null, heading: 0
+  };
+  s.heading = s.rng() * Math.PI * 2;
+  placeSiblingAhead(s, dx, dy);
+  siblings.push(s);
+  return s;
+}
+
+function sibDone(s) {
+  return s.heard >= 3 && !(talk && talk.sib === s);
+}
+
+// ---- movement rules: each returns a direction to walk in, or null to stand
+
+function seek(s, tx, ty, arrive = 4) {
+  const vx = tx - s.x, vy = ty - s.y;
+  const d = Math.hypot(vx, vy);
+  if (d < arrive) return null;
+  return [vx / d, vy / d];
+}
+
+function wanderTarget(s, radius) {
+  const a = s.rng() * Math.PI * 2;
+  const r = radius * Math.sqrt(s.rng());
+  s.tx = s.homeX + Math.cos(a) * r;
+  s.ty = s.homeY + Math.sin(a) * r;
+}
+
+function wander(s, dt, radius, pauseMin, pauseMax) {
+  if (s.pause > 0) { s.pause -= dt; return null; }
+  if (s.tx === null) wanderTarget(s, radius);
+  const v = seek(s, s.tx, s.ty);
+  if (!v) {
+    s.tx = null;
+    s.pause = pauseMin + s.rng() * (pauseMax - pauseMin);
+  }
+  return v;
+}
+
+const RULE_STEER = {
+  // back and forth over a short stretch, a beat at each end
+  pace(s, dt) {
+    if (s.pause > 0) { s.pause -= dt; return null; }
+    const v = seek(s, s.homeX + s.dir * 110, s.homeY);
+    if (!v) { s.dir = -s.dir; s.pause = 600; }
+    return v;
+  },
+  // a long straight line, turning only at the ends, never stopping
+  straight(s) {
+    const v = seek(s, s.homeX + s.dir * 420, s.homeY, 8);
+    if (!v) s.dir = -s.dir;
+    return v || [s.dir, 0];
+  },
+  // a wide steady circle around where it was found
+  circle(s, dt) {
+    s.t += sibSpeed(s) * dt / 1000 / 130;
+    return seek(s, s.homeX + Math.cos(s.t) * 130, s.homeY + Math.sin(s.t) * 130, 1)
+      || [-Math.sin(s.t), Math.cos(s.t)];
+  },
+  // along a line, swinging side to side
+  zigzag(s, dt) {
+    s.t += dt / 1000;
+    const along = s.dir * sibSpeed(s);
+    const tx = s.x + along * 0.4;
+    const ty = s.homeY + Math.sin(s.t * 3.2) * 55;
+    if (Math.abs(s.x - s.homeX) > 320 && Math.sign(s.x - s.homeX) === s.dir) s.dir = -s.dir;
+    return seek(s, tx, ty, 0.5);
+  },
+  // nowhere in particular, slowly
+  wander(s, dt) {
+    return wander(s, dt, 220, 500, 1800);
+  },
+  // a few steps, a stop, a few steps
+  stop_go(s, dt) {
+    s.go -= dt;
+    if (s.go < -1300) s.go = 900;           // stopped long enough: go again
+    if (s.go <= 0) return null;
+    return wander(s, dt, 260, 0, 0);
+  },
+  // means to go straight, keeps curving one way
+  veer(s, dt) {
+    s.heading += 0.3 * dt / 1000 * (1 + 0.4 * Math.sin(s.t += dt / 700));
+    return [Math.cos(s.heading), Math.sin(s.heading)];
+  },
+  // wanders, but goes still when the hero comes close
+  freeze(s, dt) {
+    if (Math.hypot(player.x - s.x, player.y - s.y) < SIB_NEAR) return null;
+    return wander(s, dt, 200, 400, 1400);
+  },
+  // wanders, but backs away (still facing the hero) when the hero comes close
+  retreat(s, dt) {
+    const vx = s.x - player.x, vy = s.y - player.y;
+    const d = Math.hypot(vx, vy);
+    if (d < SIB_NEAR) {
+      s.tx = null;
+      return [vx / d, vy / d];
+    }
+    return wander(s, dt, 200, 600, 2000);
+  },
+  // keeps the hero in reach, never too close
+  follow(s) {
+    const d = Math.hypot(player.x - s.x, player.y - s.y);
+    if (d < 120 || (d < 170 && !s.go)) { s.go = 0; return null; }
+    s.go = 1;
+    return seek(s, player.x, player.y, 120);
+  }
+};
+
+function updateSiblings(dt) {
+  if (!sibData) return;
+
+  // next sibling: once the candy is on the ant's back and the last
+  // sibling has said all three sets
+  const last = siblings[siblings.length - 1];
+  const moving = player.dirX !== 0 || player.dirY !== 0;
+  if (candy.state === "carried" && siblings.length < sibData.ants.length &&
+      (!last || sibDone(last)) && moving) {
+    // like the candy: only walking time counts, standing still does not
+    sibWalked += dt;
+    if (sibWalked >= (last ? SIB_DELAY_NEXT : SIB_DELAY_FIRST)) {
+      spawnSibling(player.dirX, player.dirY);
+      sibWalked = 0;
+    }
+  }
+
+  for (const s of siblings) {
+    if (!s.seen) {
+      if (sibOnScreen(s)) {
+        s.seen = true;
+        s.homeX = s.x;
+        s.homeY = s.y;
+      } else if (moving) {
+        // heading somewhere else now: move it ahead again, still off screen
+        const vx = s.x - player.x, vy = s.y - player.y;
+        const cos = (vx * player.dirX + vy * player.dirY) /
+          (Math.hypot(vx, vy) * Math.hypot(player.dirX, player.dirY));
+        if (cos < 0.5) placeSiblingAhead(s, player.dirX, player.dirY);
+      }
+      continue;   // waits where it is until found
+    }
+
+    // talking: stands still and faces the hero
+    let v = null;
+    if (talk && talk.sib === s) {
+      s.facing = player.x > s.x ? 1 : -1;
+    } else {
+      v = RULE_STEER[s.def.rule](s, dt);
+    }
+
+    if (v) {
+      const sp = sibSpeed(s) * dt / 1000;
+      s.x += v[0] * sp;
+      s.y += v[1] * sp;
+      if (s.def.rule === "retreat" && Math.hypot(player.x - s.x, player.y - s.y) < SIB_NEAR + 20) {
+        s.facing = player.x > s.x ? 1 : -1;   // backing away, eyes on the hero
+      } else if (Math.abs(v[0]) > 0.2) {
+        s.facing = v[0] > 0 ? 1 : -1;
+      }
+      // its own gait: frame count and how long each step is held
+      s.stepTime += dt;
+      while (s.stepTime >= s.def.intervals[s.step]) {
+        s.stepTime -= s.def.intervals[s.step];
+        s.step = (s.step + 1) % s.def.sequence.length;
+      }
+    } else {
+      s.step = 0;
+      s.stepTime = 0;
+    }
+  }
+}
+
+function drawSibling(s) {
+  const img = sibImage(s);
+  const ax = Math.round(s.x * DPR) - Math.round(camera.x * DPR);
+  const ay = Math.round(s.y * DPR) - Math.round(camera.y * DPR);
+  const k = s.def.scale * DPR;
+  ctx.save();
+  ctx.translate(ax, ay);
+  ctx.scale(s.facing === 1 ? -k : k, k);
+  ctx.drawImage(img, -sibData.anchor.x, -sibData.anchor.y);
+  ctx.restore();
+}
+
+function drawSiblings() {
+  for (const s of siblings) if (s.seen || sibOnScreen(s)) drawSibling(s);
+}
+
+// a sibling under a click/tap (screen CSS px), nearest first
+function siblingAt(cx, cy) {
+  const wx = cx + camera.x, wy = cy + camera.y;
+  let best = null, bestD = Infinity;
+  for (const s of siblings) {
+    if (!s.seen) continue;
+    const b = sibBox(s);
+    if (wx < b.l - SIB_TAP_PAD || wx > b.r + SIB_TAP_PAD ||
+        wy < b.t - SIB_TAP_PAD || wy > b.b + SIB_TAP_PAD) continue;
+    const d = Math.hypot(wx - s.x, wy - s.y);
+    if (d < bestD) { best = s; bestD = d; }
+  }
+  return best;
+}
+
+// ==================================================
+// TALK (GAME_BIBLE §33)
+// A click/tap on a sibling plays its next set. Lines come one by one,
+// one breath each. The hero never answers.
+// A click while lines are still coming shows the rest at once;
+// a click after that moves on to the next set.
+//
+// Four looks, for review. Pick with #ink #label #slip #outline
+// (or ?talk=...). Default: ink.
+//   ink      no bubble: worn typewriter ink straight on the paper
+//   label    no bubble: a specimen label pinned to the ant by a thin line
+//   slip     bubble:    a torn paper slip laid on the floor
+//   outline  bubble:    a 1-bit ink outline with a stepped tail
+// ==================================================
+
+const TALK_STYLES = ["ink", "label", "slip", "outline"];
+const TALK_STYLE = (() => {
+  const h = location.hash.slice(1);
+  const q = new URLSearchParams(location.search).get("talk");
+  return TALK_STYLES.includes(h) ? h : TALK_STYLES.includes(q) ? q : "ink";
+})();
+
+const TALK_FONT = 22;           // VT323 size, 1 text px = 1 CSS px
+const TALK_LINE_GAP = 3;        // CSS px between lines
+const TALK_FIRST = 250;         // ms before the first line
+const TALK_BREATH = 520;        // ms between lines, plus...
+const TALK_PER_CHAR = 34;       // ...this much per character of the line before
+const TALK_HOLD = 2600;         // ms the whole set stays after its last line
+const TALK_FADE = 700;          // ms to fade out
+
+let talk = null;   // { sib, set, lines, at[], clock, shownAll, end }
+
+// one line of worn typewriter ink at a fixed height so lines share a baseline
+function talkLine(str, seed, color = INK) {
+  const size = TALK_FONT;
+  const font = `${size}px "VT323", monospace`;
+  const c = document.createElement("canvas");
+  const x = c.getContext("2d");
+  x.font = font;
+  const w = Math.ceil(x.measureText(str).width) + 2;
+  const h = Math.round(size * 0.95) + 2;
+  c.width = w;
+  c.height = h;
+  x.font = font;
+  x.fillStyle = "#000";
+  x.fillText(str, 0, Math.round(size * 0.72));
+  const src = x.getImageData(0, 0, w, h).data;
+
+  // 1-bit: ghost ink 1px down-right, ink on top, then soft knock-outs
+  const out = x.createImageData(w, h);
+  const d = out.data;
+  const on = (px, py) => px >= 0 && py >= 0 && px < w && py < h && src[(py * w + px) * 4 + 3] >= 110;
+  for (let py = 0; py < h; py++) {
+    for (let px = 0; px < w; px++) {
+      const i = (py * w + px) * 4;
+      let col = null;
+      if (on(px, py)) col = color;
+      else if (on(px - 1, py - 1)) col = GHOST;
+      if (!col) continue;
+      d[i] = col[0]; d[i + 1] = col[1]; d[i + 2] = col[2]; d[i + 3] = 255;
+    }
+  }
+  const rand = makeRng(seed);
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] && rand() < 0.06) d[i + 3] = 0;
+  }
+  x.clearRect(0, 0, w, h);
+  x.putImageData(out, 0, 0);
+  return c;
+}
+
+function startTalk(s) {
+  const letter = s.def.letter;
+  const lines = sibLines[letter].sets[s.heard];
+  const at = [];
+  let t = TALK_FIRST;
+  for (let i = 0; i < lines.length; i++) {
+    at.push(t);
+    t += TALK_BREATH + TALK_PER_CHAR * lines[i].length;
+  }
+  talk = {
+    sib: s,
+    set: s.heard,
+    lines: lines.map((str, i) => talkLine(str, letter.charCodeAt(0) * 97 + s.heard * 13 + i)),
+    tag: talkLine(letter, letter.charCodeAt(0), CREDIT_INK),
+    at,
+    clock: 0,
+    end: at[at.length - 1] + TALK_HOLD + 40 * lines[lines.length - 1].length
+  };
+  s.heard++;
+}
+
+// returns true if the click was used by a sibling
+function tapSibling(s) {
+  if (talk && talk.sib === s) {
+    const lastAt = talk.at[talk.at.length - 1];
+    if (talk.clock < lastAt) {
+      // still coming: show the rest now
+      const skip = lastAt - talk.clock;
+      talk.clock = lastAt;
+      talk.end = Math.max(talk.end - skip, lastAt + TALK_HOLD);
+      return true;
+    }
+    if (s.heard < 3) { startTalk(s); return true; }
+    return false;
+  }
+  if (talk) return false;               // someone else is still talking
+  if (s.heard >= 3) return false;       // has said all it will say
+  startTalk(s);
+  return true;
+}
+
+function updateTalk(dt) {
+  if (!talk) return;
+  talk.clock += dt;
+  if (talk.clock >= talk.end + TALK_FADE) talk = null;
+}
+
+// ---- drawing
+
+function talkVisible() {
+  let n = 0;
+  while (n < talk.at.length && talk.clock >= talk.at[n]) n++;
+  return n;
+}
+
+function talkAlpha() {
+  return Math.max(0, Math.min(1, 1 - (talk.clock - talk.end) / TALK_FADE));
+}
+
+// the block of text (CSS px, screen) for the whole set, so a bubble
+// does not grow while lines come in. Above the sibling if it fits,
+// else below; never on top of the hero or the candy on its back.
+function talkLayout(pad) {
+  const s = talk.sib;
+  const b = sibBox(s);
+  const lw = Math.max(...talk.lines.map(l => l.width));
+  const lh = talk.lines[0].height + TALK_LINE_GAP;
+  const bw = lw + pad * 2;
+  const bh = lh * talk.lines.length - TALK_LINE_GAP + pad * 2;
+  const headX = (s.facing === 1 ? b.r - 10 : b.l + 10) - camera.x;
+  const sibTop = b.t - camera.y, sibBottom = b.b - camera.y;
+
+  // the hero (and what it carries) on screen, with room around it
+  const a = antBodyBox();
+  let hero = { l: a.l, r: a.r, t: a.t - 30, b: a.b + 6 };
+  if (candy.state === "carried") {
+    const [hw, hh] = candyHalfSize();
+    hero = { l: Math.min(hero.l, candy.x - hw), r: Math.max(hero.r, candy.x + hw),
+             t: Math.min(hero.t, candy.y - hh), b: Math.max(hero.b, candy.y + hh) };
+  }
+  hero = { l: hero.l - camera.x - 10, r: hero.r - camera.x + 10,
+           t: hero.t - camera.y - 10, b: hero.b - camera.y + 10 };
+
+  const clampX = x => Math.max(12, Math.min(W - bw - 12, x));
+  const aligned = s.facing === 1 ? headX - bw + 24 : headX - 24;
+  const xs = [aligned, hero.r + 8, hero.l - 8 - bw].map(clampX);
+  const ys = [sibTop - 18 - bh, sibBottom + 18];
+  const hits = (x, y) => x < hero.r && x + bw > hero.l && y < hero.b && y + bh > hero.t;
+  let x = xs[0], y = ys[0];
+  search:
+  for (const cy of ys) {
+    if (cy < 12 || cy + bh > H - 12) continue;
+    for (const cx of xs) {
+      if (!hits(cx, cy)) { x = cx; y = cy; break search; }
+    }
+  }
+  const below = y > sibTop;
+  return { x, y, w: bw, h: bh, lh, pad, below,
+           headX, headY: below ? sibBottom - 4 : sibTop + 8 };
+}
+
+function px(v) { return Math.round(v * DPR); }
+
+function drawTalkLines(L, shown) {
+  for (let i = 0; i < shown; i++) {
+    const c = talk.lines[i];
+    ctx.drawImage(c, px(L.x + L.pad), px(L.y + L.pad + i * L.lh), c.width * DPR, c.height * DPR);
+  }
+}
+
+// stepped 1-bit line between two points (CSS px), in whole-pixel blocks
+function stepLine(x0, y0, x1, y1, color, size = 1) {
+  const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) / size;
+  ctx.fillStyle = color;
+  for (let i = 0; i <= n; i++) {
+    const t = n ? i / n : 0;
+    ctx.fillRect(px(Math.round((x0 + (x1 - x0) * t) / size) * size),
+                 px(Math.round((y0 + (y1 - y0) * t) / size) * size),
+                 Math.ceil(size * DPR), Math.ceil(size * DPR));
+  }
+}
+
+const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+
+const TALK_DRAW = {
+  ink() {
+    const L = talkLayout(0);
+    drawTalkLines(L, talkVisible());
+  },
+
+  label() {
+    const L = talkLayout(0);
+    const shown = talkVisible();
+    // specimen label: letter tag, a rule above and below the lines,
+    // and a thin pin from the nearer rule down (or up) to the ant
+    const top = L.y - 4, bottom = L.y + L.h + 3;
+    stepLine(L.x, top, L.x + L.w, top, rgb(GHOST));
+    stepLine(L.x, bottom, L.x + L.w, bottom, rgb(GHOST));
+    const pinX = Math.max(L.x + 6, Math.min(L.x + L.w - 6, L.headX));
+    const pinY = L.below ? top : bottom;
+    stepLine(pinX, pinY, L.headX, L.headY, rgb(CREDIT_INK));
+    ctx.fillStyle = rgb(INK);
+    ctx.fillRect(px(L.headX) - DPR, px(L.headY) - DPR, 3 * DPR, 3 * DPR);
+    const tag = talk.tag;
+    ctx.drawImage(tag, px(L.x), px(top - tag.height - 1), tag.width * DPR, tag.height * DPR);
+    drawTalkLines(L, shown);
+  },
+
+  slip() {
+    const L = talkLayout(9);
+    const shown = talkVisible();
+    const rand = makeRng(talk.sib.def.letter.charCodeAt(0) + talk.set * 31);
+    // shadow, slip, torn edge, tail
+    ctx.fillStyle = "rgba(60,45,30,0.18)";
+    ctx.fillRect(px(L.x + 2), px(L.y + 3), px(L.w), px(L.h));
+    ctx.fillStyle = "rgb(229,223,209)";
+    ctx.fillRect(px(L.x), px(L.y), px(L.w), px(L.h));
+    // torn top and bottom edges: bites out of the slip, 1-2 px
+    ctx.fillStyle = "rgb(214,206,190)";
+    for (let x = 0; x < L.w; x += 2) {
+      const a = Math.floor(rand() * 3), b = Math.floor(rand() * 3);
+      if (a) ctx.fillRect(px(L.x + x), px(L.y), px(2), px(a));
+      if (b) ctx.fillRect(px(L.x + x), px(L.y + L.h - b), px(2), px(b));
+    }
+    // a ragged tongue of paper pointing at the ant, edged in faint ink
+    const tx = Math.max(L.x + 14, Math.min(L.x + L.w - 14, L.headX));
+    const ty = L.below ? L.y : L.y + L.h;
+    const len = Math.max(8, Math.min(18, Math.abs(L.headY - ty) - 4));
+    for (let i = 0; i < len; i++) {
+      const half = 7 * (1 - i / len) + 0.5;
+      const cx = tx + (L.headX - tx) * i / (len * 2.2);
+      const yy = L.below ? ty - i - 1 : ty + i;
+      ctx.fillStyle = rgb(GHOST);
+      ctx.fillRect(px(cx - half - 1), px(yy), px(half * 2 + 2), px(1));
+      ctx.fillStyle = "rgb(229,223,209)";
+      ctx.fillRect(px(cx - half), px(yy), px(half * 2), px(1));
+    }
+    ctx.fillStyle = rgb(GHOST);
+    ctx.fillRect(px(L.x), px(L.y + L.h), px(L.w), DPR);
+    drawTalkLines(L, shown);
+  },
+
+  outline() {
+    const L = talkLayout(9);
+    const shown = talkVisible();
+    const p = 2;  // outline block size, CSS px
+    const ink = rgb(INK);
+    const x0 = Math.round(L.x / p) * p, y0 = Math.round(L.y / p) * p;
+    const x1 = x0 + Math.round(L.w / p) * p, y1 = y0 + Math.round(L.h / p) * p;
+    // faint wash inside so the text sits on something
+    ctx.fillStyle = "rgba(240,234,222,0.55)";
+    ctx.fillRect(px(x0 + p), px(y0 + p), px(x1 - x0 - p), px(y1 - y0 - p));
+    // edges with stepped corners
+    stepLine(x0 + p * 2, y0, x1 - p * 2, y0, ink, p);
+    stepLine(x0 + p * 2, y1, x1 - p * 2, y1, ink, p);
+    stepLine(x0, y0 + p * 2, x0, y1 - p * 2, ink, p);
+    stepLine(x1, y0 + p * 2, x1, y1 - p * 2, ink, p);
+    ctx.fillStyle = ink;
+    for (const [cx, cy] of [[x0 + p, y0 + p], [x1 - p, y0 + p], [x0 + p, y1 - p], [x1 - p, y1 - p]]) {
+      ctx.fillRect(px(cx), px(cy), Math.ceil(p * DPR), Math.ceil(p * DPR));
+    }
+    // stepped tail toward the ant's head
+    const below = L.below;
+    const ex = Math.max(x0 + 16, Math.min(x1 - 24, L.headX));
+    const ey = below ? y0 : y1;
+    const tipX = ex + (L.headX > ex ? 6 : -6), tipY = ey + (below ? -12 : 12);
+    ctx.fillStyle = "rgb(214,206,190)";
+    ctx.fillRect(px(ex + p), px(ey), px(8 - p), Math.ceil(p * DPR));
+    stepLine(ex, ey, tipX, tipY, ink, p);
+    stepLine(ex + 8, ey, tipX, tipY, ink, p);
+    drawTalkLines(L, shown);
+  }
+};
+
+function drawTalk() {
+  if (!talk) return;
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.globalAlpha = talkAlpha();
+  TALK_DRAW[TALK_STYLE]();
   ctx.restore();
 }
 
@@ -1288,15 +1869,21 @@ function loop(time) {
   camera.x = player.x - W / 2;
   camera.y = player.y - H / 2;
   pruneChunks();
-  if (!intro.active) updateCandy(dt);
+  if (!intro.active) {
+    updateCandy(dt);
+    updateSiblings(dt);
+    updateTalk(dt);
+  }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawWorld(ctx, camera.x, camera.y, true);
   drawCandy("floor");
   drawVignette(ctx);
+  drawSiblings();
   drawCandy("behind");
   drawPlayer();
   drawCandy("front");
+  drawTalk();
   if (intro.active) drawIntro();
   drawGrain();
 
@@ -1311,13 +1898,16 @@ window.addEventListener("pointerdown", () => canvas.focus());
 
 // Build stamp: lets you confirm in DevTools that the browser is not
 // running a cached older index.html
-console.info("[SUGAR] build: touch-01");
+console.info("[SUGAR] build: siblings-01");
 
 // title font; give up after 3s so a slow network never blocks the game
 const introFont = Promise.race([
   document.fonts.load('36px "VT323"'),
   new Promise(r => setTimeout(r, 3000))
 ]);
+
+// siblings are optional: if their files are missing the walk still works
+loadSiblings().catch(err => console.warn("[SUGAR] siblings not loaded", err));
 
 Promise.all([loadAnimations(), loadObjects(), introFont])
   .then(() => {
@@ -1343,6 +1933,8 @@ Promise.all([loadAnimations(), loadObjects(), introFont])
 // Read-only hooks for automated checks
 window.__ant = player;
 window.__candy = candy;
+window.__siblings = siblings;
+window.__talk = () => talk;
 </script>
 
 </body>

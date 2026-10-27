@@ -1,0 +1,224 @@
+{
+  "source": "ChatGPT, SUGAR / THE TEN SIBLINGS / Dialogue Study 02",
+  "note": "One set per click, in order. Each line is one breath and appears on its own. The hero never answers.",
+  "siblings": {
+    "A": {
+      "title": "THE KEEPER",
+      "about": "첫째 | 13세 | 어린 꼰대",
+      "sets": [
+        [
+          "Oi you",
+          "Yeah you",
+          "This is the third time",
+          "Are you thick or something?",
+          "We have a system here"
+        ],
+        [
+          "Someone has to take responsibility",
+          "And apparently",
+          "That someone is always me"
+        ],
+        [
+          "You can piss off wherever you like",
+          "Just be back before dark",
+          "And don’t make me come looking for you"
+        ]
+      ]
+    },
+    "B": {
+      "title": "THE COLLECTOR",
+      "about": "둘째 | 12세 | 천진난만한 사기꾼",
+      "sets": [
+        [
+          "Holy shit",
+          "Where did you get that?",
+          "Actually never mind",
+          "Give it here"
+        ],
+        [
+          "Finders keepers",
+          "Losers weepers",
+          "That’s the law mate"
+        ],
+        [
+          "Tell you what",
+          "You can have anything I own",
+          "Except my stuff"
+        ]
+      ]
+    },
+    "C": {
+      "title": "THE WATCHER",
+      "about": "셋째 | 12세 | 음모론자",
+      "sets": [
+        [
+          "Don’t turn around",
+          "I’m serious",
+          "Something moved",
+          "I fucking saw it"
+        ],
+        [
+          "Listen",
+          "Yesterday there were six stones",
+          "Today there are five",
+          "You tell me that’s normal"
+        ],
+        [
+          "Do you hear that?",
+          "Exactly",
+          "Nothing",
+          "That’s what scares me"
+        ]
+      ]
+    },
+    "D": {
+      "title": "THE CONTRARIAN",
+      "about": "넷째 | 12세 | 반항아",
+      "sets": [
+        [
+          "Fuck off",
+          "I know the way"
+        ],
+        [
+          "Who made you king?",
+          "Nobody?",
+          "Thought so"
+        ],
+        [
+          "I’m not lost",
+          "The stupid road is going the wrong way"
+        ]
+      ]
+    },
+    "E": {
+      "title": "THE WANDERER",
+      "about": "다섯째 | 11세 | 평화로운 바보",
+      "sets": [
+        [
+          "Where am I going?",
+          "Oh",
+          "Good question"
+        ],
+        [
+          "Found a really nice stick",
+          "Lost it though",
+          "Lovely stick"
+        ],
+        [
+          "If you lie down long enough",
+          "The clouds do all the travelling for you"
+        ]
+      ]
+    },
+    "F": {
+      "title": "THE HESITATOR",
+      "about": "여섯째 | 11세 | 과잉 배려형",
+      "sets": [
+        [
+          "I was thinking we could go left",
+          "But right is fine too",
+          "Actually right might be better",
+          "Unless you wanted left",
+          "Did you?"
+        ],
+        [
+          "Sorry",
+          "I know you said it’s fine",
+          "I just wanted to make sure",
+          "Sorry"
+        ],
+        [
+          "Sometimes I think everyone hates me",
+          "Not everyone obviously",
+          "That would be ridiculous",
+          "Just the ones I’ve met"
+        ]
+      ]
+    },
+    "G": {
+      "title": "THE RUNNER",
+      "about": "일곱째 | 12세 | 운동부 악동",
+      "sets": [
+        [
+          "Last one there eats shit",
+          "GO"
+        ],
+        [
+          "Tired?",
+          "From what?",
+          "Standing there?"
+        ],
+        [
+          "Why do I run?",
+          "Dunno",
+          "Feels bloody brilliant",
+          "Try it"
+        ]
+      ]
+    },
+    "H": {
+      "title": "THE DREAMER",
+      "about": "여덟째 | 11세 | 이상한 시인",
+      "sets": [
+        [
+          "Do you think stars get lonely?",
+          "There’s so many of them",
+          "But they’re all so far apart"
+        ],
+        [
+          "I reckon the moon is an egg",
+          "A massive one",
+          "Something horrible might hatch out"
+        ],
+        [
+          "What if the things we forget",
+          "Still remember us?"
+        ]
+      ]
+    },
+    "I": {
+      "title": "THE RETREATER",
+      "about": "아홉째 | 12세 | 냉소적인 외톨이",
+      "sets": [
+        [
+          "Can you not?",
+          "Just",
+          "Not"
+        ],
+        [
+          "You can stay",
+          "I don’t care",
+          "Just don’t make it weird"
+        ],
+        [
+          "Leaving already?",
+          "Whatever",
+          "Wasn’t counting on you staying anyway"
+        ]
+      ]
+    },
+    "J": {
+      "title": "THE FOLLOWER",
+      "about": "막내 | 10세 | 세상을 믿는 아이",
+      "sets": [
+        [
+          "Where are we going?",
+          "Can I come?",
+          "I’ll be good",
+          "Promise"
+        ],
+        [
+          "Is that a star?",
+          "Can I touch it?",
+          "Will it burn my hands?"
+        ],
+        [
+          "You know the way right?",
+          "I don’t",
+          "But that’s okay",
+          "I’ve got you"
+        ]
+      ]
+    }
+  }
+}
