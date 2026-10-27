@@ -1101,3 +1101,15 @@ SPEED는 world px/s (주인공 걷기 155).
 
 조정용 상수 (`index.html` ENCOUNTER): `ENCOUNTER_DELAY` `ENCOUNTER_PAUSE`
 `ENCOUNTER_FIRST_HOLD` `ENCOUNTER_GAP` `ENCOUNTER_SECOND_HOLD` `ENCOUNTER_PER_CHAR` `ENCOUNTER_FADE`
+
+---
+
+# 35. FAVICON / LINK PREVIEW
+
+- 파비콘: 마스터 개미 앞모습(`turn_01`)의 머리 부분을 종이색 바탕에. 16px에서도 눈이 보인다.
+  `icons/favicon.ico` (16·32·48) · `icons/favicon-32.png` · `icons/apple-touch-icon.png` (180) · `icons/icon-512.png`
+- 링크 미리보기 (카카오톡 등): `icons/og-image.jpg` 1200×630.
+  실제 게임 화면으로 만들었다. 별사탕을 진 개미 + 인트로와 같은 낡은 잉크 타이틀 + @1300dress.
+- 제목: SUGAR / HONEY / ICED TEA · 설명: Chapter 01 — SUGAR
+- 미리보기 이미지와 주소는 절대 경로다. 저장소 이름이나 주소가 바뀌면 `index.html` 머리의 og 태그를 같이 고친다.
+- 카카오톡은 미리보기를 캐시한다. 바꾼 뒤 예전 모습이 나오면 Kakao Developers의 공유 디버거에서 캐시를 지운다.
